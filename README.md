@@ -202,5 +202,5 @@ The name reflects several ideas behind this project:
 
 2. **Small but complex** — Despite their small size, mysids have sophisticated sensory and swimming systems. They move through complex environments, explore their surroundings, and locate resources. This reflects the role of Mysid MCP in navigating complex codebases, searching for relevant code, tracing project structure, and providing the right context to an AI agent.
 
-3. **Efficient and resource-conscious** — Mysids occupy an important position in aquatic food webs. Inspired by this efficient use of resources, Mysid MCP is implemented in **Rust** with an emphasis on low overhead, efficient memory usage, and responsive tooling for operations such as caching, file access, code search, builds, and Android device interaction.
+3. **Explore and interact** — Mysids use their sensory systems to detect and respond to their surroundings while moving through the aquatic environment and obtaining available food. Similarly, Mysid MCP gives an AI agent tools to explore a development environment, locate relevant resources, and act on them.
 
