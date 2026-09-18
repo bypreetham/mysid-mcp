@@ -19,7 +19,7 @@
 
 ### 1. Official Model Context Protocol (MCP) Implementation
 - **Standard Protocol Compliance**: Fully adheres to the official MCP specification (`2024-11-05`).
-- **Native Stdio JSON-RPC**: Operates directly over standard I/O with sub-20ms latency — no Python, Node.js, or bridge runtimes required.
+- **Native Stdio JSON-RPC**: Operates directly over standard I/O with low latency.
 - **Dynamic Tool Schema Discovery (`tools/list`)**: Automatically publishes typed JSON Schemas for all tools, enabling IDEs to display typed parameters and descriptions.
 - **Universal IDE Compatibility**: Instant plug-and-play with **Google Antigravity / Gemini**, **Claude Desktop**, **Cursor**, and **Cline**.
 
