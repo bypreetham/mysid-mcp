@@ -31,8 +31,8 @@
 
 ### 3. Multi-Stack Adapter Architecture
 `mysid` dynamically tailors its AST indexing, error filtering, and build heuristics according to the active technology stack:
-- **Android & Native C/C++**: NDK, CMake, JNI header bindings, Oboe/OpenSL audio patterns, and shared libraries.
 - **Kotlin & Java**: Gradle Kotlin DSL (`build.gradle.kts`), Android manifests, Coroutines, Room, and Hilt.
+- **Android & Native C/C++**: NDK, CMake, JNI header bindings, C++ folder patterns, and shared libraries.
 - **Spring Boot**: REST controllers, services, repositories, JPA entities, and Maven/Gradle dependencies.
 - **React & TypeScript / Next.js**: Component trees, JSX/TSX syntax, custom hooks, and npm dependencies.
 - **Rust Crates**: Cargo workspaces, multi-crate module graphs, and type definitions.
