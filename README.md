@@ -189,3 +189,18 @@ cd rust-mcp
 cargo build --release
 ```
 The compiled binary will be at `rust-mcp/target/release/mysid.exe`.
+
+---
+
+## Why Mysid?
+
+A **mysid** is a small shrimp-like crustacean, commonly called a mysid shrimp. The name comes from the taxonomic group **Mysida**.
+
+The name reflects several ideas behind this project:
+
+1. **Adaptable** — Mysids inhabit a variety of environments, including caves, deep water, marine environments, and freshwater. Similarly, **Mysid MCP** is designed to operate across different development environments and interact with files, source code, build systems, and Android devices.
+
+2. **Small but complex** — Despite their small size, mysids have sophisticated sensory and swimming systems. They move through complex environments, explore their surroundings, and locate resources. This reflects the role of Mysid MCP in navigating complex codebases, searching for relevant code, tracing project structure, and providing the right context to an AI agent.
+
+3. **Efficient and resource-conscious** — Mysids occupy an important position in aquatic food webs. Inspired by this efficient use of resources, Mysid MCP is implemented in **Rust** with an emphasis on low overhead, efficient memory usage, and responsive tooling for operations such as caching, file access, code search, builds, and Android device interaction.
+
