@@ -1,0 +1,71 @@
+name: Build & Release mysid
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'rust-mcp/**'
+      - 'package-portable.ps1'
+      - 'install.ps1'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build & Publish Windows Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            rust-mcp -> target
+
+      - name: Compile mysid Release Binary
+        run: |
+          cd rust-mcp
+          cargo build --release
+        shell: bash
+
+      - name: Package Portable Bundle & Archive
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\package-portable.ps1 -SkipBuild
+        shell: pwsh
+
+      - name: Publish / Update Rolling Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "mysid (Latest Build)"
+          body: |
+            ## High-Performance Standalone Codebase Intelligence & Native MCP Server
+
+            ### Direct Download Links:
+            - **Standalone Executable**: [`mysid.exe`](https://github.com/${{ github.repository }}/releases/latest/download/mysid.exe)
+            - **Portable Bundle (Zero Dependencies)**: [`mysid-windows-x64.zip`](https://github.com/${{ github.repository }}/releases/latest/download/mysid-windows-x64.zip)
+
+            ### Installation:
+            Download and extract `mysid-windows-x64.zip`, then run:
+            ```powershell
+            .\install.ps1
+            ```
+            This registers `mysid` into your User `PATH` and auto-configures Gemini Antigravity & Claude Desktop.
+          draft: false
+          prerelease: false
+          files: |
+            dist/mysid-windows-x64.zip
+            rust-mcp/target/release/mysid.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

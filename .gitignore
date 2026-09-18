@@ -1,0 +1,19 @@
+# Rust compilation artifacts
+target*/
+**/target*/
+Cargo.lock
+
+# Distribution bundles
+dist/
+*.zip
+*.exe
+
+# Configuration & Environment
+.env
+.active_workspace
+
+# Python cache & build residue (if any)
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
