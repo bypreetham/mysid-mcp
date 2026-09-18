@@ -78,6 +78,7 @@ mysid-mcp/
 ├── mysid-mcp.svg          # Official vector logo
 ├── install.ps1            # One-click Windows global installer
 ├── package-portable.ps1   # Portable bundle & ZIP packager
+├── Dockerfile             # Multi-stage container build (Glama & Docker MCP)
 ├── LICENSE                # Apache 2.0 License
 └── .gitignore             # Excludes compilation artifacts and targets
 ```
