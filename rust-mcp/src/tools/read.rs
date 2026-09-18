@@ -36,6 +36,8 @@ pub fn execute_read(params: &Value, default_root: Option<&str>) -> String {
 
     let raw_file = match params
         .get("path")
+        .or_else(|| params.get("query"))
+        .or_else(|| params.get("file"))
         .and_then(|v| v.as_str())
         .or_else(|| {
             params
