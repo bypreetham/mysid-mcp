@@ -38,7 +38,7 @@
 - **Rust Crates**: Cargo workspaces, multi-crate module graphs, and type definitions.
 
 ### 4. Bare Filename Resolution & 150-Entry LRU Cache
-- **Eliminates Path Hallucination**: AI agents frequently waste tokens guessing complex paths like `app/src/main/java/com/example/engine/media/FileName.kt`.
+- **Eliminates Path Hallucination**: AI agents frequently waste tokens guessing complex paths like `app/src/main/java/com/example/folderA/folderB/FileName.kt`.
 - **Just the Filename**: Agents and developers simply pass the bare filename:
   ```powershell
   mysid read "FileName.kt#L10-40" "AnotherFile.cpp#L100-140"
