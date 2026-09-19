@@ -246,12 +246,35 @@ pub fn execute_build(params: &Value, default_root: Option<&str>) -> String {
     }
 
     let success = exit_code == 0;
+    let (final_stdout, final_stderr) = if success {
+        ("success".to_string(), "".to_string())
+    } else {
+        let combined = format!("{}\n{}", stdout_str, stderr_str);
+        let error_lines: Vec<&str> = combined
+            .lines()
+            .filter(|line| {
+                let l = line.to_lowercase();
+                l.contains("error")
+                    || l.contains("failed")
+                    || l.contains("exception")
+                    || l.starts_with("(!)")
+                    || l.contains("ts")
+            })
+            .collect();
+        let filtered = if !error_lines.is_empty() {
+            error_lines.join("\n")
+        } else {
+            combined
+        };
+        ("".to_string(), filtered)
+    };
+
     json!({
         "success": success,
         "stack": stack_name,
         "exit_code": exit_code,
-        "stdout": stdout_str.trim(),
-        "stderr": stderr_str.trim()
+        "stdout": final_stdout,
+        "stderr": final_stderr
     })
     .to_string()
 }
