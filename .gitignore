@@ -7,6 +7,7 @@ Cargo.lock
 dist/
 *.zip
 *.exe
+.loop.txt
 
 # Configuration & Environment
 .env
@@ -17,3 +18,4 @@ __pycache__/
 *.pyc
 *.egg-info/
 .pytest_cache/
+

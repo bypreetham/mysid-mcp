@@ -7,8 +7,9 @@ use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use tools::workspace::{parse_file_uri, WorkspaceManager};
 
-fn dispatch_method(method: &str, params: &Value, default_root: Option<&str>, workspace: &Arc<Mutex<Option<String>>>) -> String {
+fn dispatch_method(method: &str, params: &Value, default_root: Option<&str>, workspace_mgr: &Arc<Mutex<WorkspaceManager>>) -> String {
     if params.get("help").and_then(|v| v.as_bool()).unwrap_or(false) {
         if let Some(help_text) = get_tool_help(method) {
             return help_text.to_string();
@@ -28,54 +29,74 @@ fn dispatch_method(method: &str, params: &Value, default_root: Option<&str>, wor
         "set_workspace" => {
             let path_val = params
                 .get("path")
+                .or_else(|| params.get("workspace"))
+                .or_else(|| params.get("name"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .trim()
                 .to_string();
 
+            let alias = params.get("alias").and_then(|v| v.as_str());
+
             if path_val.is_empty() {
                 json!({
                     "success": false,
-                    "error": "set_workspace requires a `path` parameter."
-                })
-                .to_string()
-            } else if !Path::new(&path_val).exists() {
-                json!({
-                    "success": false,
-                    "error": format!("Path does not exist: {}", path_val)
+                    "error": "set_workspace requires a `path` or `name` parameter."
                 })
                 .to_string()
             } else {
-                *workspace.lock().unwrap() = Some(path_val.clone());
-                save_persisted_workspace(&path_val);
+                let mut mgr = workspace_mgr.lock().unwrap();
+                match mgr.switch_workspace(&path_val) {
+                    Ok(resolved_path) => {
+                        if let Some(a) = alias {
+                            mgr.register_and_activate(&resolved_path, Some(a));
+                        }
+                        let known = mgr.get_known_workspaces();
+                        drop(mgr);
 
-                // Automatically list root directory entries (L1 depth) to save LLM roundtrips
-                let list_params = json!({
-                    "workspace_root": path_val,
-                    "max_depth": 1
-                });
-                let list_raw = tools::file::execute_list_dir(&list_params, Some(&path_val));
-                let entries = serde_json::from_str::<Value>(&list_raw)
-                    .ok()
-                    .and_then(|v| v.get("entries").cloned())
-                    .unwrap_or_else(|| json!([]));
+                        // Automatically list root directory entries (L1 depth) to save LLM roundtrips
+                        let list_params = json!({
+                            "workspace_root": &resolved_path,
+                            "max_depth": 1
+                        });
+                        let list_raw = tools::file::execute_list_dir(&list_params, Some(&resolved_path));
+                        let entries = serde_json::from_str::<Value>(&list_raw)
+                            .ok()
+                            .and_then(|v| v.get("entries").cloned())
+                            .unwrap_or_else(|| json!([]));
 
-                json!({
-                    "success": true,
-                    "workspace": path_val,
-                    "message": format!("Workspace set to '{}'", path_val),
-                    "entries": entries
-                })
-                .to_string()
+                        json!({
+                            "success": true,
+                            "workspace": resolved_path,
+                            "message": format!("Workspace set to '{}'", resolved_path),
+                            "known_workspaces": known,
+                            "entries": entries
+                        })
+                        .to_string()
+                    }
+                    Err(e) => {
+                        let known = mgr.get_known_workspaces();
+                        json!({
+                            "success": false,
+                            "error": e,
+                            "known_workspaces": known
+                        })
+                        .to_string()
+                    }
+                }
             }
         }
 
         "get_workspace" => {
-            let current = workspace.lock().unwrap().clone();
-            match current {
-                Some(p) => json!({ "success": true, "workspace": p }).to_string(),
-                None => json!({ "success": true, "workspace": null }).to_string(),
-            }
+            let mgr = workspace_mgr.lock().unwrap();
+            let current = mgr.get_current();
+            let known = mgr.get_known_workspaces();
+            json!({
+                "success": true,
+                "workspace": current,
+                "known_workspaces": known
+            })
+            .to_string()
         }
 
         // ── File / project tools ──────────────────────────────────────────────
@@ -115,63 +136,6 @@ fn dispatch_method(method: &str, params: &Value, default_root: Option<&str>, wor
         "inspect_symbol" => tools::read::execute_read(params, default_root),
         _ => format!("ERROR: Unknown tool method '{}'", method),
     }
-}
-
-fn get_persisted_workspace_file() -> std::path::PathBuf {
-    // 1. Check current working directory
-    if let Ok(cwd) = std::env::current_dir() {
-        let candidate = cwd.join(".active_workspace");
-        if candidate.exists() {
-            return candidate;
-        }
-    }
-
-    // 2. Check well-known Orchestra repo location
-    let orchestra_ws = Path::new("E:\\Orchestra\\.active_workspace");
-    if orchestra_ws.exists() {
-        return orchestra_ws.to_path_buf();
-    }
-
-    // 3. Check exe directory and parents
-    let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let mut dir = exe.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
-    for _ in 0..4 {
-        let candidate = dir.join(".active_workspace");
-        if candidate.exists() {
-            return candidate;
-        }
-        if let Some(parent) = dir.parent() {
-            dir = parent.to_path_buf();
-        } else {
-            break;
-        }
-    }
-
-    // 4. Default to ~/.active_workspace or exe folder
-    if let Some(user_home) = std::env::var_os("USERPROFILE") {
-        return Path::new(&user_home).join(".active_workspace");
-    }
-
-    exe.parent().unwrap_or_else(|| Path::new(".")).join(".active_workspace")
-}
-
-
-fn read_persisted_workspace() -> Option<String> {
-    let file = get_persisted_workspace_file();
-    if file.exists() {
-        if let Ok(content) = std::fs::read_to_string(file) {
-            let trimmed = content.trim().to_string();
-            if !trimmed.is_empty() {
-                return Some(trimmed);
-            }
-        }
-    }
-    None
-}
-
-fn save_persisted_workspace(path: &str) {
-    let file = get_persisted_workspace_file();
-    let _ = std::fs::write(file, path.trim());
 }
 
 fn coerce_value(val: &str) -> Value {
@@ -676,19 +640,19 @@ fn main() {
             return;
         }
 
-        let persisted_ws = read_persisted_workspace();
-        let workspace: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(persisted_ws.clone()));
+        let workspace_mgr = Arc::new(Mutex::new(WorkspaceManager::new()));
         let (verb, mut params) = parse_cli_args(&args);
+        let active_ws = workspace_mgr.lock().unwrap().get_current();
 
         // Inject workspace if not explicitly provided
-        if let Some(ref ws) = persisted_ws {
+        if let Some(ref ws) = active_ws {
             if let Some(obj) = params.as_object_mut() {
                 obj.entry("workspace_root").or_insert_with(|| json!(ws));
                 obj.entry("project_path").or_insert_with(|| json!(ws));
             }
         }
 
-        let output = dispatch_method(&verb, &params, persisted_ws.as_deref(), &workspace);
+        let output = dispatch_method(&verb, &params, active_ws.as_deref(), &workspace_mgr);
         println!("{}", format_output(&output));
         return;
     }
@@ -847,18 +811,19 @@ fn get_mcp_tools_list() -> Value {
         },
         {
             "name": "set_workspace",
-            "description": "Set the active workspace/project root directory and return top-level directory structure.",
+            "description": "Set active project workspace by path or registered alias (e.g. 'mysid-mcp', 'hypersonus'). Optional if already opened in project root.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "Absolute path to workspace root" }
+                    "path": { "type": "string", "description": "Absolute path or registered alias name of project workspace" },
+                    "alias": { "type": "string", "description": "Optional custom alias name to assign to this workspace in the registry" }
                 },
                 "required": ["path"]
             }
         },
         {
             "name": "get_workspace",
-            "description": "Retrieve the currently active workspace root path.",
+            "description": "Retrieve the currently active workspace root path and all registered project aliases in the HashMap.",
             "inputSchema": {
                 "type": "object",
                 "properties": {}
@@ -883,8 +848,7 @@ fn get_mcp_tools_list() -> Value {
     let stdout = io::stdout();
     let mut handle = stdout.lock();
 
-    let initial_ws = read_persisted_workspace();
-    let workspace: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(initial_ws));
+    let workspace_mgr = Arc::new(Mutex::new(WorkspaceManager::new()));
 
     for line in stdin.lock().lines() {
         let line_text = match line {
@@ -922,17 +886,36 @@ fn get_mcp_tools_list() -> Value {
             }
         };
 
-        let default_root: Option<String> = workspace.lock().unwrap().clone();
+        let default_root: Option<String> = workspace_mgr.lock().unwrap().get_current();
 
         // ── Official MCP Standard Methods ────────────────────────────────────
         match request.method.as_str() {
             "initialize" => {
+                // Auto-detect rootUri or workspaceFolders from client initialize handshake
+                if let Some(root_uri) = request.params.get("rootUri").and_then(|v| v.as_str()) {
+                    let cleaned = parse_file_uri(root_uri);
+                    if Path::new(&cleaned).is_dir() {
+                        workspace_mgr.lock().unwrap().register_and_activate(&cleaned, None);
+                    }
+                } else if let Some(folders) = request.params.get("workspaceFolders").and_then(|v| v.as_array()) {
+                    if let Some(first_folder) = folders.first() {
+                        let alias = first_folder.get("name").and_then(|n| n.as_str());
+                        if let Some(uri) = first_folder.get("uri").and_then(|u| u.as_str()) {
+                            let cleaned = parse_file_uri(uri);
+                            if Path::new(&cleaned).is_dir() {
+                                workspace_mgr.lock().unwrap().register_and_activate(&cleaned, alias);
+                            }
+                        }
+                    }
+                }
+
                 let response = JsonRpcResponse {
                     jsonrpc: "2.0".to_string(),
                     result: json!({
                         "protocolVersion": "2024-11-05",
                         "capabilities": {
-                            "tools": {}
+                            "tools": {},
+                            "roots": { "listChanged": true }
                         },
                         "serverInfo": {
                             "name": "mysid",
@@ -968,7 +951,7 @@ fn get_mcp_tools_list() -> Value {
                 let tool_name = request.params.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let arguments = request.params.get("arguments").cloned().unwrap_or_else(|| json!({}));
 
-                let output_text = dispatch_method(tool_name, &arguments, default_root.as_deref(), &workspace);
+                let output_text = dispatch_method(tool_name, &arguments, default_root.as_deref(), &workspace_mgr);
                 let is_error = output_text.starts_with("ERROR") || output_text.starts_with("Error");
 
                 let response = JsonRpcResponse {
@@ -989,7 +972,7 @@ fn get_mcp_tools_list() -> Value {
             }
             // ── Direct / Legacy Method Dispatch (Backwards Compatibility) ────
             _ => {
-                let output_text = dispatch_method(&request.method, &request.params, default_root.as_deref(), &workspace);
+                let output_text = dispatch_method(&request.method, &request.params, default_root.as_deref(), &workspace_mgr);
                 let response = JsonRpcResponse {
                     jsonrpc: "2.0".to_string(),
                     result: json!({ "output": output_text }),

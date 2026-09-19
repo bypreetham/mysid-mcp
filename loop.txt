@@ -1,0 +1,4 @@
+& "C:\Users\harip\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\cargo.exe" build --release
+
+powershell -ExecutionPolicy Bypass -File
+ E:\Orchestra\mysid-mcp\install.ps1
