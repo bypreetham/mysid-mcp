@@ -1,7 +1,7 @@
 # Android & mysid Tooling Reference
 
 ### Core Tools (7)
-1. `mysid set_workspace <path>`: Set active workspace root (returns L1 directory tree).
+1. `mysid set_workspace <path>`: set to space if not in project directory else no need to set space.. mysid mcp works on the current file path you are in.
 2. `mysid read <symbol | fileName#Lstart-end...>`: AST symbol lookup or batch file slice inspection (bare filenames are enough).
 3. `mysid search <query> [--types kt,cpp]`: High-speed regex/string discovery respecting `.gitignore`.
 4. `mysid replace <old> <new> [--types ...] [--dry-run]`: Global workspace or single-file search-and-replace refactoring.
