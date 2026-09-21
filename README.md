@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Speed-Native%20Rust%20%3C20ms-orange.svg?logo=rust" alt="Rust Speed" />
 </p>
 
-# mysid — High-Performance Native Codebase Intelligence & MCP Server
+# mysid — High-Performance Codebase Intelligence MCP Server
 
 `mysid` is an ultra-fast, standalone code intelligence engine and Model Context Protocol (MCP) server written in Rust. It eliminates bloated token footprints and multi-turn round-trips for AI coding agents and human developers alike.
 
@@ -32,7 +32,7 @@
 ### 3. Multi-Stack Adapter Architecture
 `mysid` dynamically tailors its AST indexing, error filtering, and build heuristics according to the active technology stack:
 - **Kotlin & Java**: Gradle Kotlin DSL (`build.gradle.kts`), Android manifests, Coroutines, Room, and Hilt.
-- **Android & Native C/C++**: NDK, CMake, JNI header bindings, C++ folder patterns, and shared libraries.
+- **Android & Android Native C/C++**: NDK, CMake, JNI header bindings, C++ folder patterns, and shared libraries.
 - **Spring Boot**: REST controllers, services, repositories, JPA entities, and Maven/Gradle dependencies.
 - **React & TypeScript / Next.js**: Component trees, JSX/TSX syntax, custom hooks, and npm dependencies.
 - **Rust Crates**: Cargo workspaces, multi-crate module graphs, and type definitions.
