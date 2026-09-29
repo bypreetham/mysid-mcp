@@ -4,8 +4,10 @@ use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
-use super::workspace::{resolve_root, resolve_file_in_workspace};
+use super::overview::execute_overview;
+use super::workspace::{resolve_file_in_workspace, resolve_root};
 use crate::adapters::detect_adapter;
+use crate::parsers::is_supported_extension;
 
 pub fn execute_read(params: &Value, default_root: Option<&str>) -> String {
     // If explicit batch params are present, delegate to execute_read_batch
@@ -81,6 +83,9 @@ pub fn execute_read(params: &Value, default_root: Option<&str>) -> String {
     };
 
     if !full_path.is_file() {
+        if full_path.is_dir() {
+            return format!("ERROR: '{}' is a directory, not a file. Use 'mysid list_dir {}' to view directory contents.", clean_rel_file, clean_rel_file);
+        }
         if !clean_rel_file.contains('/') && !clean_rel_file.contains('\\') {
             let symbol_result = inspect_symbol_in_workspace(Path::new(&project_path), clean_rel_file, 5);
             if !symbol_result.is_empty() {
@@ -98,12 +103,9 @@ pub fn execute_read(params: &Value, default_root: Option<&str>) -> String {
     let lines: Vec<&str> = content.lines().collect();
     let total_lines = lines.len();
 
-    // ── Markdown outline mode ────────────────────────────────────────────────
-    // Triggered when: file is .md/.markdown AND no explicit offset arg given.
-    let is_markdown = {
-        let lower = clean_rel_file.to_ascii_lowercase();
-        lower.ends_with(".md") || lower.ends_with(".markdown")
-    };
+    // ── Outline mode delegation ──────────────────────────────────────────────
+    // If no explicit line range or offset is given and the file type is supported
+    // by overview (code or markdown), delegate to execute_overview to get method signatures / section outline!
     let has_explicit_offset = params.get("offset").is_some()
         || parsed_start.is_some()
         || params
@@ -112,25 +114,19 @@ pub fn execute_read(params: &Value, default_root: Option<&str>) -> String {
             .map(|a| a.len() >= 2)
             .unwrap_or(false);
 
-    if is_markdown && !has_explicit_offset {
-        if total_lines == 0 {
-            return "(file is empty)".to_string();
+    let ext = full_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+
+    if !has_explicit_offset && is_supported_extension(ext) {
+        let mut overview_params = params.clone();
+        if let Some(obj) = overview_params.as_object_mut() {
+            obj.insert("file".to_string(), serde_json::Value::String(clean_rel_file.to_string()));
+            obj.entry("workspace_root")
+                .or_insert_with(|| serde_json::Value::String(project_path.clone()));
         }
-        let headings: Vec<String> = lines
-            .iter()
-            .enumerate()
-            .filter(|(_, l)| l.trim_start().starts_with('#'))
-            .map(|(idx, l)| format!("{}:{}", idx + 1, l))
-            .collect();
-        if headings.is_empty() {
-            return format!("(markdown outline: no headings found in {clean_rel_file})");
-        }
-        return format!(
-            "[{}:headings/{}]\n{}",
-            clean_rel_file.replace('\\', "/"),
-            total_lines,
-            headings.join("\n")
-        );
+        return execute_overview(&overview_params, default_root);
     }
     // ── End outline mode ─────────────────────────────────────────────────────
 

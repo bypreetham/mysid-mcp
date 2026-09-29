@@ -83,15 +83,40 @@ if (-not (Test-Path $InstallDir)) {
 
 $DestExe = Join-Path $InstallDir "mysid.exe"
 
+function Safe-Install-Binary ($Source, $Target) {
+    try {
+        Copy-Item -Path $Source -Destination $Target -Force -ErrorAction Stop
+        return $true
+    } catch {
+        $OldFile = "$Target.old"
+        Remove-Item -Path $OldFile -Force -ErrorAction SilentlyContinue
+        try {
+            Move-Item -Path $Target -Destination $OldFile -Force -ErrorAction Stop
+            Copy-Item -Path $Source -Destination $Target -Force -ErrorAction Stop
+            return $true
+        } catch {
+            return $false
+        }
+    }
+}
+
 # 3. Copy binary
 Write-Host "[3/4] Installing binary to $DestExe..." -ForegroundColor Yellow
-Copy-Item -Path $SourceExe -Destination $DestExe -Force
+if (Safe-Install-Binary $SourceExe $DestExe) {
+    Write-Host "  -> Installed to: $DestExe" -ForegroundColor Green
+} else {
+    Write-Warning "Could not update $DestExe (file locked)."
+}
 
 # Also mirror to ~/.local/bin if it exists
 $LocalBin = Join-Path $env:USERPROFILE ".local\bin"
 if (Test-Path $LocalBin) {
-    Copy-Item -Path $SourceExe -Destination (Join-Path $LocalBin "mysid.exe") -Force
-    Write-Host "  -> Mirrored to: $LocalBin\mysid.exe" -ForegroundColor Green
+    $LocalBinExe = Join-Path $LocalBin "mysid.exe"
+    if (Safe-Install-Binary $SourceExe $LocalBinExe) {
+        Write-Host "  -> Mirrored to: $LocalBinExe" -ForegroundColor Green
+    } else {
+        Write-Warning "Could not update $LocalBinExe (file locked)."
+    }
 }
 
 # 4. Configure User PATH

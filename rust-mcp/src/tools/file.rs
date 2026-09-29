@@ -210,12 +210,28 @@ pub fn execute_list_dir(params: &Value, default_root: Option<&str>) -> String {
     };
     let sub_path: Option<String> = params
         .get("path")
+        .or_else(|| params.get("dir"))
+        .or_else(|| {
+            params.get("args")
+                .and_then(|v| v.as_array())
+                .and_then(|a| a.get(0))
+        })
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
     let full: bool = params
         .get("full")
         .or_else(|| params.get("all"))
+        .or_else(|| params.get("recursive"))
         .and_then(|v| v.as_bool())
+        .or_else(|| {
+            params.get("args").and_then(|v| v.as_array()).map(|arr| {
+                arr.iter().any(|item| {
+                    item.as_str()
+                        .map(|s| s == "--recursive" || s == "-r" || s == "--full")
+                        .unwrap_or(false)
+                })
+            })
+        })
         .unwrap_or(false);
 
     let max_depth: Option<usize> = if full {

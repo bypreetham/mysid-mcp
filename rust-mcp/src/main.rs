@@ -1,4 +1,5 @@
 mod adapters;
+pub mod parsers;
 mod protocol;
 mod tools;
 
@@ -26,7 +27,7 @@ fn dispatch_method(method: &str, params: &Value, default_root: Option<&str>, wor
 
     match method {
         // ── Session management ────────────────────────────────────────────────
-        "set_workspace" => {
+        "set_workspace" | "setworkspace" => {
             let path_val = params
                 .get("path")
                 .or_else(|| params.get("workspace"))
@@ -87,27 +88,45 @@ fn dispatch_method(method: &str, params: &Value, default_root: Option<&str>, wor
             }
         }
 
-        "get_workspace" => {
+        "get_workspace" | "getworkspace" => {
             let mgr = workspace_mgr.lock().unwrap();
-            let current = mgr.get_current();
+            let current = mgr.get_current().or_else(|| default_root.map(|s| s.to_string()));
             let known = mgr.get_known_workspaces();
+            drop(mgr);
+
+            let entries = if let Some(ref root) = current {
+                let list_params = json!({
+                    "workspace_root": root,
+                    "max_depth": 1
+                });
+                let list_raw = tools::file::execute_list_dir(&list_params, Some(root));
+                serde_json::from_str::<Value>(&list_raw)
+                    .ok()
+                    .and_then(|v| v.get("entries").cloned())
+                    .unwrap_or_else(|| json!([]))
+            } else {
+                json!([])
+            };
+
             json!({
                 "success": true,
                 "workspace": current,
-                "known_workspaces": known
+                "known_workspaces": known,
+                "entries": entries
             })
             .to_string()
         }
 
         // ── File / project tools ──────────────────────────────────────────────
+        "help" => get_root_help().to_string(),
         "search" => tools::search::execute_search(params, default_root),
-        "read" => tools::read::execute_read(params, default_root),
+        "read" | "peek" => tools::read::execute_read(params, default_root),
         "graph" => tools::graph::execute_graph(params, default_root),
         "patch" => tools::patch::execute_patch(params, default_root),
         "patch_batch" => tools::patch::execute_patch_batch(params, default_root),
         "replace" => tools::replace::execute_replace(params, default_root),
         "create_file" | "write" => tools::file::execute_create_file(params, default_root),
-        "list_dir" | "ls" => tools::file::execute_list_dir(params, default_root),
+        "list_dir" | "ls" | "dir" | "listdir" => tools::file::execute_list_dir(params, default_root),
         "mkdir" => tools::file::execute_mkdir(params, default_root),
         "rename" | "mv" => tools::file::execute_rename(params, default_root),
         "delete" | "rm" => tools::file::execute_delete(params, default_root),
@@ -115,6 +134,7 @@ fn dispatch_method(method: &str, params: &Value, default_root: Option<&str>, wor
         "exec" | "run" => tools::exec::execute_exec(params, default_root),
         "lint" | "check" => tools::lint::execute_lint(params, default_root),
         "symbols" => tools::symbols::execute_symbols(params, default_root),
+        "overview" | "signatures" => tools::overview::execute_overview(params, default_root),
         "build" => tools::build::execute_build(params, default_root),
         "release" | "aab" => tools::build::execute_release(params, default_root),
         "install" => tools::build::execute_install(params, default_root),
@@ -134,7 +154,7 @@ fn dispatch_method(method: &str, params: &Value, default_root: Option<&str>, wor
             tools::android::execute_android(&p, default_root)
         }
         "inspect_symbol" => tools::read::execute_read(params, default_root),
-        _ => format!("ERROR: Unknown tool method '{}'", method),
+        _ => format!("ERROR: No such tool found: '{}'. Use 'mysid help' to see all available tools.", method),
     }
 }
 
@@ -195,7 +215,7 @@ fn parse_cli_args(args: &[String]) -> (String, Value) {
         }
     }
 
-    if verb == "set_workspace" {
+    if verb == "set_workspace" || verb == "setworkspace" {
         params.insert("path".to_string(), json!(positionals.join(" ")));
     } else if verb == "list_dir" || verb == "ls" {
         if !positionals.is_empty() {
@@ -239,6 +259,14 @@ fn parse_cli_args(args: &[String]) -> (String, Value) {
     } else if verb == "mkdir" {
         if !positionals.is_empty() {
             params.insert("path".to_string(), json!(positionals[0]));
+        }
+    } else if verb == "overview" || verb == "signatures" {
+        if !positionals.is_empty() {
+            if positionals.len() == 1 {
+                params.insert("path".to_string(), json!(positionals[0]));
+            } else {
+                params.insert("files".to_string(), json!(positionals));
+            }
         }
     } else if verb == "rename" || verb == "mv" {
         if positionals.len() > 0 {
@@ -407,6 +435,7 @@ Core Commands:\n  \
   mysid patch_batch --json <file>     Atomic multi-file batch patching\n  \
   mysid replace <old> <new>           Global search-and-replace across files (--types, --dry-run)\n  \
   mysid file <action>                 File utilities: new, rename, delete, list ('file --help')\n  \
+  mysid overview <file... | dir>      Extract method signatures and parameter outlines ('overview --help')\n  \
   mysid graph [--mode overview|flow]  Architectural call-flow & impact analysis ('graph --help')\n\n\
 Build & Delivery:\n  \
   mysid build [clean]                 Fast assembleDebug (or clean assembleDebug) with token-filtered errors\n  \
@@ -612,6 +641,22 @@ Examples:\n  \
   mysid exec \"git status\"\n  \
   mysid exec \"adb devices\"\n"
         ),
+        "overview" | "signatures" => Some(
+            "mysid overview: Extract method signatures and parameter outlines across languages\n\n\
+Description:\n  \
+  High-speed signature extractor for Java, Kotlin, C/C++, Rust, Python, TypeScript/JS, Go, Swift, and C#.\n  \
+  Returns clean outlines of classes, methods, and full parameter lists without wasting context.\n\n\
+Usage:\n  \
+  mysid overview <file>                Extract method signatures from a single file\n  \
+  mysid overview <file1> <file2> ...   Extract signatures from multiple files in one turn\n  \
+  mysid overview <directory>           Extract signatures from all source files in a folder\n\n\
+Options:\n  \
+  --format json                        Return structured JSON instead of human-readable outline\n\n\
+Examples:\n  \
+  mysid overview MusicService.kt\n  \
+  mysid overview FlacDecoder.cpp VolumeManager.kt\n  \
+  mysid overview app/src/main/java/com/hypersonus/player/volume\n"
+        ),
         _ => None,
     }
 }
@@ -674,6 +719,22 @@ fn get_mcp_tools_list() -> Value {
                         "items": { "type": "string" },
                         "description": "Optional list of file slice specs to inspect together (e.g. ['FileA.kt#L1-30', 'FileB.cpp#L40-80'])"
                     }
+                }
+            }
+        },
+        {
+            "name": "overview",
+            "description": "Extract all method signatures, parameters, return types, and class structures across Java, Kotlin, C/C++, Rust, Python, TypeScript, Go, Swift, and C#.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Target file or directory path (e.g. 'MusicService.kt' or 'FlacDecoder.cpp')" },
+                    "files": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional list of files to inspect simultaneously"
+                    },
+                    "format": { "type": "string", "description": "Output format: 'text' (default human-readable outline) or 'json'" }
                 }
             }
         },

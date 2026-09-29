@@ -1,0 +1,92 @@
+{
+  "src/main.rs": {
+    "path": "src/main.rs",
+    "language": "Rust",
+    "total_lines": 1030,
+    "mtime_secs": 1790432340,
+    "file_size": 48668,
+    "types": [],
+    "methods": [
+      {
+        "name": "dispatch_method",
+        "kind": "function",
+        "signature": "fn dispatch_method(method: &str, params: &Value, default_root: Option<&str>, workspace_mgr: &Arc<Mutex<WorkspaceManager>>) -> String",
+        "params": "method: &str, params: &Value, default_root: Option<&str>, workspace_mgr: &Arc<Mutex<WorkspaceManager>>",
+        "return_type": "String",
+        "start_line": 13,
+        "end_line": 13,
+        "parent": null
+      },
+      {
+        "name": "coerce_value",
+        "kind": "function",
+        "signature": "fn coerce_value(val: &str) -> Value",
+        "params": "val: &str",
+        "return_type": "Value",
+        "start_line": 143,
+        "end_line": 143,
+        "parent": null
+      },
+      {
+        "name": "parse_cli_args",
+        "kind": "function",
+        "signature": "fn parse_cli_args(args: &[String]) -> (String, Value)",
+        "params": "args: &[String]) -> (String, Value",
+        "return_type": "(String, Value)",
+        "start_line": 155,
+        "end_line": 155,
+        "parent": null
+      },
+      {
+        "name": "format_output",
+        "kind": "function",
+        "signature": "fn format_output(raw: &str) -> String",
+        "params": "raw: &str",
+        "return_type": "String",
+        "start_line": 347,
+        "end_line": 347,
+        "parent": null
+      },
+      {
+        "name": "get_root_help",
+        "kind": "function",
+        "signature": "fn get_root_help() -> &'static str",
+        "params": "",
+        "return_type": "&'static str",
+        "start_line": 407,
+        "end_line": 407,
+        "parent": null
+      },
+      {
+        "name": "get_tool_help",
+        "kind": "function",
+        "signature": "fn get_tool_help(tool: &str) -> Option<&'static str>",
+        "params": "tool: &str",
+        "return_type": "Option<&'static str>",
+        "start_line": 434,
+        "end_line": 434,
+        "parent": null
+      },
+      {
+        "name": "main",
+        "kind": "function",
+        "signature": "fn main()",
+        "params": "",
+        "return_type": null,
+        "start_line": 646,
+        "end_line": 646,
+        "parent": null
+      },
+      {
+        "name": "get_mcp_tools_list",
+        "kind": "function",
+        "signature": "fn get_mcp_tools_list() -> Value",
+        "params": "",
+        "return_type": "Value",
+        "start_line": 687,
+        "end_line": 687,
+        "parent": null
+      }
+    ]
+  }
+}
