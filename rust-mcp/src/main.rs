@@ -1,4 +1,5 @@
 mod adapters;
+mod index;
 pub mod parsers;
 mod protocol;
 mod tools;
