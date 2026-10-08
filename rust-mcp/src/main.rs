@@ -55,6 +55,9 @@ fn dispatch_method(method: &str, params: &Value, default_root: Option<&str>, wor
                         let known = mgr.get_known_workspaces();
                         drop(mgr);
 
+                        // Per-project scratch dir for logs (build.log); best effort.
+                        let _ = tools::build_log::ensure_dir(Path::new(&resolved_path));
+
                         // Automatically list root directory entries (L1 depth) to save LLM roundtrips
                         let list_params = json!({
                             "workspace_root": &resolved_path,
@@ -321,8 +324,15 @@ fn parse_cli_args(args: &[String]) -> (String, Value) {
             }
         }
     } else if verb == "graph" {
-        if params.contains_key("help") || params.contains_key("h") || (positionals.len() == 1 && (positionals[0] == "help" || positionals[0] == "--help" || positionals[0] == "-h")) {
-            params.insert("mode".to_string(), json!("help"));
+        // `--flow <symbol>` would otherwise swallow the symbol as the flag's value.
+        if let Some(Value::String(sym)) = params.get("flow").cloned() {
+            positionals.insert(0, sym);
+            params.insert("flow".to_string(), json!(true));
+        }
+        if params.contains_key("h") || (positionals.len() == 1 && (positionals[0] == "help" || positionals[0] == "-h")) {
+            params.insert("help".to_string(), json!(true));
+        } else if let Some(symbol) = positionals.first() {
+            params.insert("symbol".to_string(), json!(symbol));
         }
     } else if verb == "read" {
         if positionals.len() > 1 {
@@ -436,7 +446,7 @@ Core Commands:\n  \
   mysid replace <old> <new>           Global search-and-replace across files (--types, --dry-run)\n  \
   mysid file <action>                 File utilities: new, rename, delete, list ('file --help')\n  \
   mysid overview <file... | dir>      Extract method signatures and parameter outlines ('overview --help')\n  \
-  mysid graph [--mode overview|flow]  Architectural call-flow & impact analysis ('graph --help')\n\n\
+  mysid graph [symbol] [--flow] [--depth N]  Callers/callees of a symbol, or a code map ('graph --help')\n\n\
 Build & Delivery:\n  \
   mysid build [clean]                 Fast assembleDebug (or clean assembleDebug) with token-filtered errors\n  \
   mysid release                       Compile release AAB bundle, verify bundle & R8 mapping\n  \
@@ -548,18 +558,22 @@ Examples:\n  \
   mysid file list app -L2\n"
         ),
         "graph" => Some(
-            "mysid graph: Architectural code graph & call-flow intelligence\n\n\
-Description:\n  \
-  Analyzes project symbols, call relationships, and package dependencies.\n\n\
-Usage:\n  \
-  mysid graph [--mode overview] [--filter <pkg>]  Generate package/module dependency overview\n  \
-  mysid graph --mode flow --query <symbol>        Trace downstream call graph\n  \
-  mysid graph --mode impact --query <symbol>      Trace upstream callers / blast radius\n  \
-  mysid graph --mode symbol --query <symbol>      Inspect node metadata and connections\n\n\
-Examples:\n  \
-  mysid graph --mode overview\n  \
-  mysid graph --mode flow --query StreamResolver\n  \
-  mysid graph --mode impact --query PlaybackEngineController\n"
+            "mysid graph: callers and callees of a symbol
+
+Usage:
+    mysid graph <symbol>                  Callers + symbol + callees (1 hop)
+    mysid graph <symbol> --depth N        Callers and callees up to N hops (max 5)
+    mysid graph <symbol> --flow           Same data drawn as UPSTREAM / TARGET / DOWNSTREAM trees
+    mysid graph <symbol> --flow --depth 2 Trees, 2 hops
+    mysid graph [dir|file]                Map of the workspace, a directory, or a file's symbols
+
+<symbol> is a function, class, or Class.method (also file:Name when a name is ambiguous).
+
+Examples:
+    mysid graph useDarkMode
+    mysid graph StreamResolver --flow --depth 2
+    mysid graph src/Pages
+"
         ),
         "build" => Some(
             "mysid build: Native Android Gradle compilation\n\n\
@@ -685,9 +699,10 @@ fn main() {
             return;
         }
 
-        let workspace_mgr = Arc::new(Mutex::new(WorkspaceManager::new()));
+        let workspace_mgr = Arc::new(Mutex::new(WorkspaceManager::new_cli()));
         let (verb, mut params) = parse_cli_args(&args);
         let active_ws = workspace_mgr.lock().unwrap().get_current();
+        let notice = workspace_mgr.lock().unwrap().notice.clone();
 
         // Inject workspace if not explicitly provided
         if let Some(ref ws) = active_ws {
@@ -698,6 +713,9 @@ fn main() {
         }
 
         let output = dispatch_method(&verb, &params, active_ws.as_deref(), &workspace_mgr);
+        if let Some(n) = notice {
+            println!("{}", n);
+        }
         println!("{}", format_output(&output));
         return;
     }
@@ -830,12 +848,13 @@ fn get_mcp_tools_list() -> Value {
         },
         {
             "name": "graph",
-            "description": "Architectural call-flow, dependency, and impact analysis.",
+            "description": "Callers and callees of a symbol (1 hop by default). With no symbol, a compact map of the workspace; a directory or file path drills into the map.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "mode": { "type": "string", "enum": ["overview", "flow"], "description": "Graph analysis mode" },
-                    "entry": { "type": "string", "description": "Optional entry point symbol or function" }
+                    "symbol": { "type": "string", "description": "Function, class, Class.method, or a directory/file path" },
+                    "depth": { "type": "integer", "description": "Hops of callers and callees to include (default 1, max 5)" },
+                    "flow": { "type": "boolean", "description": "Draw UPSTREAM / TARGET / DOWNSTREAM trees instead of the compact card" }
                 }
             }
         },

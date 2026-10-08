@@ -79,6 +79,41 @@ fn is_valid_project_dir(path: &Path) -> bool {
     true
 }
 
+/// Files/dirs whose presence marks a directory as a project root.
+const PROJECT_MARKERS: &[&str] = &[
+    ".mysid", ".git", "package.json", "Cargo.toml", "pom.xml", "build.gradle", "build.gradle.kts",
+    "settings.gradle", "settings.gradle.kts", "pyproject.toml", "setup.py", "go.mod",
+    "CMakeLists.txt", "Package.swift",
+];
+
+/// Nearest ancestor of `start` (inclusive) that looks like a project root.
+/// Stops before drive roots, system folders and the user profile directory.
+pub fn find_project_root(start: &Path) -> Option<PathBuf> {
+    for dir in start.ancestors() {
+        if !is_valid_project_dir(dir) {
+            break;
+        }
+        if PROJECT_MARKERS.iter().any(|m| dir.join(m).exists()) {
+            return Some(dir.to_path_buf());
+        }
+    }
+    None
+}
+
+/// Project root for the current directory: nearest marker-bearing ancestor, else the directory
+/// itself when it is an ordinary folder.
+fn infer_from_cwd() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    find_project_root(&cwd).or_else(|| if is_valid_project_dir(&cwd) { Some(cwd) } else { None })
+}
+
+fn canon_lower(p: &Path) -> String {
+    p.canonicalize()
+        .map(|c| c.to_string_lossy().trim_start_matches(r"\\?\").to_string())
+        .unwrap_or_else(|_| p.to_string_lossy().to_string())
+        .to_lowercase()
+}
+
 fn read_legacy_workspace() -> Option<String> {
     // 1. Check current working directory for .active_workspace
     if let Ok(cwd) = std::env::current_dir() {
@@ -161,27 +196,24 @@ pub fn parse_file_uri(uri: &str) -> String {
 pub struct WorkspaceManager {
     pub current: Option<String>,
     pub registry: HashMap<String, String>, // alias (lowercase) -> canonical path
+    /// Set only by an explicit `set_workspace`; survives across CLI invocations.
+    pub persisted_current: Option<String>,
+    /// One-line heads-up shown to the caller (e.g. cwd is in a different project).
+    pub notice: Option<String>,
 }
 
 impl WorkspaceManager {
+    /// Long-lived (MCP) startup: the launching client's directory is the strongest signal.
     pub fn new() -> Self {
-        let mut mgr = Self {
-            current: None,
-            registry: HashMap::new(),
-        };
-
-        // 1. Load registry from persistent storage
+        let mut mgr = Self::empty();
         mgr.load_registry();
 
-        // 2. Auto-detect from CWD (when launched from IDE or Antigravity window)
-        if let Ok(cwd) = std::env::current_dir() {
-            if is_valid_project_dir(&cwd) {
-                let p_str = cwd.to_string_lossy().to_string();
-                mgr.register_and_activate(&p_str, None);
-            }
+        if let Some(root) = infer_from_cwd() {
+            mgr.register_and_activate(&root.to_string_lossy(), None);
         }
-
-        // 3. Fallback to legacy workspace if CWD wasn't a valid project folder
+        if mgr.current.is_none() {
+            mgr.restore_persisted();
+        }
         if mgr.current.is_none() {
             if let Some(persisted) = read_legacy_workspace() {
                 if Path::new(&persisted).is_dir() {
@@ -189,14 +221,75 @@ impl WorkspaceManager {
                 }
             }
         }
-
         mgr
+    }
+
+    /// One-shot CLI startup. An explicitly set workspace is never silently replaced by the
+    /// cwd; with none set, the project root is inferred from the cwd (self-healing).
+    pub fn new_cli() -> Self {
+        let mut mgr = Self::empty();
+        mgr.load_registry();
+
+        if mgr.restore_persisted() {
+            let here = infer_from_cwd();
+            if let (Some(here), Some(active)) = (here, mgr.current.clone()) {
+                let inside = canon_lower(&here).starts_with(&canon_lower(Path::new(&active)))
+                    || canon_lower(&std::env::current_dir().unwrap_or_default())
+                        .starts_with(&canon_lower(Path::new(&active)));
+                if !inside {
+                    mgr.notice = Some(format!(
+                        "[workspace: {} (set earlier); you are in {} - `mysid set_workspace <path>` to switch]",
+                        active,
+                        here.display()
+                    ));
+                }
+            }
+            return mgr;
+        }
+
+        if let Some(root) = infer_from_cwd() {
+            mgr.register_and_activate(&root.to_string_lossy(), None);
+        }
+        if mgr.current.is_none() {
+            if let Some(persisted) = read_legacy_workspace() {
+                if Path::new(&persisted).is_dir() {
+                    mgr.register_and_activate(&persisted, None);
+                }
+            }
+        }
+        mgr
+    }
+
+    fn empty() -> Self {
+        Self {
+            current: None,
+            registry: HashMap::new(),
+            persisted_current: None,
+            notice: None,
+        }
+    }
+
+    /// Activates the persisted explicit workspace if it still exists on disk.
+    fn restore_persisted(&mut self) -> bool {
+        match self.persisted_current.clone() {
+            Some(p) if Path::new(&p).is_dir() => {
+                self.current = Some(p);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn persist_current(&mut self, path: &str) {
+        self.persisted_current = Some(path.to_string());
+        self.save_registry();
     }
 
     pub fn load_registry(&mut self) {
         let file = workspaces_registry_file();
         if let Ok(text) = std::fs::read_to_string(&file) {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
+                self.persisted_current = val.get("current").and_then(|v| v.as_str()).map(|s| s.to_string());
                 if let Some(reg_obj) = val.get("registry").and_then(|v| v.as_object()) {
                     for (k, v) in reg_obj {
                         if let Some(p) = v.as_str() {
@@ -212,6 +305,7 @@ impl WorkspaceManager {
         let file = workspaces_registry_file();
         let payload = json!({
             "registry": self.registry,
+            "current": self.persisted_current,
         });
         let _ = std::fs::write(&file, serde_json::to_string_pretty(&payload).unwrap_or_default());
     }
@@ -252,6 +346,7 @@ impl WorkspaceManager {
         if let Some(target) = self.registry.get(&lower).cloned() {
             if Path::new(&target).is_dir() {
                 self.current = Some(target.clone());
+                self.persist_current(&target);
                 return Ok(target);
             }
         }
@@ -260,7 +355,9 @@ impl WorkspaceManager {
         let path = Path::new(trimmed);
         if path.is_dir() {
             self.register_and_activate(trimmed, None);
-            return Ok(self.current.clone().unwrap_or_else(|| trimmed.to_string()));
+            let active = self.current.clone().unwrap_or_else(|| trimmed.to_string());
+            self.persist_current(&active);
+            return Ok(active);
         }
 
         Err(format!("Workspace '{}' not found in registry and does not exist as a directory.", trimmed))

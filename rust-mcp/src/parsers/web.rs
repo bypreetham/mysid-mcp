@@ -33,12 +33,31 @@ impl LanguageParser for WebParser {
         )
         .unwrap();
 
+        // String literals are blanked before counting braces so `"{"` can't skew the depth.
+        let string_re = Regex::new(r#""[^"]*"|'[^']*'|`[^`]*`"#).unwrap();
+
         let mut current_type: Option<String> = None;
+        let mut current_kind = String::new();
+        // Brace depth at which `current_type` was declared, so it ends with its own block.
+        let mut depth: i32 = 0;
+        let mut type_depth: i32 = 0;
+        let mut type_block_seen = false;
 
         for (idx, &line) in lines.iter().enumerate() {
             let trimmed = line.trim();
             if trimmed.starts_with("//") || trimmed.starts_with('*') || trimmed.starts_with("/*") {
                 continue;
+            }
+
+            // A column-0 declaration after a block-less type (`type A = B`) ends that type.
+            if current_type.is_some()
+                && !type_block_seen
+                && !line.starts_with(char::is_whitespace)
+                && !trimmed.starts_with('{')
+                && !trimmed.is_empty()
+                && !type_re.is_match(trimmed)
+            {
+                current_type = None;
             }
 
             if let Some(caps) = type_re.captures(trimmed) {
@@ -51,6 +70,9 @@ impl LanguageParser for WebParser {
                         line: idx + 1,
                     });
                     current_type = Some(name.to_string());
+                    current_kind = kind.to_string();
+                    type_depth = depth;
+                    type_block_seen = false;
                 }
             }
 
@@ -93,8 +115,11 @@ impl LanguageParser for WebParser {
                 });
             } else if let Some(caps) = method_re.captures(trimmed) {
                 let name = caps.get(1).map_or("", |m| m.as_str()).to_string();
+                let is_member_level = depth == type_depth + 1
+                    && matches!(current_kind.as_str(), "class" | "interface");
                 if !matches!(name.as_str(), "if" | "while" | "for" | "switch" | "catch")
                     && current_type.is_some()
+                    && is_member_level
                 {
                     let (sig, params, end_line) = gather_multiline_signature(lines, idx, '{');
                     methods.push(MethodSignature {
@@ -108,6 +133,20 @@ impl LanguageParser for WebParser {
                         parent: current_type.clone(),
                     });
                 }
+            }
+
+            let code = string_re.replace_all(line, "");
+            let opens = code.matches('{').count() as i32;
+            let closes = code.matches('}').count() as i32;
+            if opens > 0 && current_type.is_some() {
+                type_block_seen = true;
+            }
+            depth += opens - closes;
+            if current_type.is_some()
+                && ((type_block_seen && depth <= type_depth)
+                    || (!type_block_seen && trimmed.ends_with(';')))
+            {
+                current_type = None;
             }
         }
 

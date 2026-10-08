@@ -30,6 +30,10 @@ impl LanguageParser for RustParser {
         .unwrap();
 
         let mut current_type: Option<String> = None;
+        // Brace depth at which `current_type` was declared, so it ends with its own block.
+        let mut depth: i32 = 0;
+        let mut type_depth: Option<i32> = None;
+        let mut type_block_seen = false;
 
         for (idx, &line) in lines.iter().enumerate() {
             let trimmed = line.trim();
@@ -47,6 +51,8 @@ impl LanguageParser for RustParser {
                         line: idx + 1,
                     });
                     current_type = Some(name.to_string());
+                    type_depth = Some(depth);
+                    type_block_seen = false;
                 }
             } else if let Some(caps) = impl_re.captures(trimmed) {
                 let tr = caps.get(1).map(|m| m.as_str().trim().to_string());
@@ -65,6 +71,8 @@ impl LanguageParser for RustParser {
                     line: idx + 1,
                 });
                 current_type = Some(label);
+                type_depth = Some(depth);
+                type_block_seen = false;
             }
 
             if let Some(caps) = fn_re.captures(trimmed) {
@@ -82,6 +90,20 @@ impl LanguageParser for RustParser {
                     end_line,
                     parent: current_type.clone(),
                 });
+            }
+
+            let opens = line.matches('{').count() as i32;
+            let closes = line.matches('}').count() as i32;
+            if opens > 0 {
+                type_block_seen = true;
+            }
+            depth += opens - closes;
+            if let Some(d) = type_depth {
+                // `struct Foo;` / `struct Foo(u32);` have no block; others end when depth returns.
+                if (type_block_seen && depth <= d) || (!type_block_seen && trimmed.ends_with(';')) {
+                    current_type = None;
+                    type_depth = None;
+                }
             }
         }
 

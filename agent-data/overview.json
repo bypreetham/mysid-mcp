@@ -1,0 +1,465 @@
+{
+  "rust-mcp/src/tools/graph.rs": {
+    "path": "rust-mcp/src/tools/graph.rs",
+    "language": "Rust",
+    "total_lines": 687,
+    "mtime_secs": 1789705867,
+    "file_size": 26472,
+    "types": [
+      {
+        "name": "Node",
+        "kind": "struct",
+        "line": 11
+      },
+      {
+        "name": "CodeGraph",
+        "kind": "struct",
+        "line": 19
+      },
+      {
+        "name": "impl CodeGraph",
+        "kind": "impl",
+        "line": 26
+      }
+    ],
+    "methods": [
+      {
+        "name": "new",
+        "kind": "function",
+        "signature": "fn new() -> Self",
+        "params": "",
+        "return_type": "Self",
+        "start_line": 27,
+        "end_line": 27,
+        "parent": "impl CodeGraph"
+      },
+      {
+        "name": "add_node",
+        "kind": "function",
+        "signature": "fn add_node(&mut self, id: String, node_type: String, name: String, file: String, line: usize)",
+        "params": "&mut self, id: String, node_type: String, name: String, file: String, line: usize",
+        "return_type": null,
+        "start_line": 36,
+        "end_line": 36,
+        "parent": "impl CodeGraph"
+      },
+      {
+        "name": "add_edge",
+        "kind": "function",
+        "signature": "fn add_edge(&mut self, src: String, target: String, rel: String)",
+        "params": "&mut self, src: String, target: String, rel: String",
+        "return_type": null,
+        "start_line": 55,
+        "end_line": 55,
+        "parent": "impl CodeGraph"
+      },
+      {
+        "name": "execute_graph",
+        "kind": "function",
+        "signature": "pub fn execute_graph(params: &Value, default_root: Option<&str>) -> String",
+        "params": "params: &Value, default_root: Option<&str>",
+        "return_type": "String",
+        "start_line": 67,
+        "end_line": 67,
+        "parent": "impl CodeGraph"
+      },
+      {
+        "name": "build_graph",
+        "kind": "function",
+        "signature": "fn build_graph(root: &Path) -> CodeGraph",
+        "params": "root: &Path",
+        "return_type": "CodeGraph",
+        "start_line": 179,
+        "end_line": 179,
+        "parent": "impl CodeGraph"
+      },
+      {
+        "name": "walk_dir_collect",
+        "kind": "function",
+        "signature": "fn walk_dir_collect(root: &Path, current: &Path, out: &mut Vec<(String, PathBuf)>)",
+        "params": "root: &Path, current: &Path, out: &mut Vec<(String, PathBuf)>",
+        "return_type": null,
+        "start_line": 370,
+        "end_line": 370,
+        "parent": "impl CodeGraph"
+      },
+      {
+        "name": "generate_overview",
+        "kind": "function",
+        "signature": "fn generate_overview(graph: &CodeGraph, root: &Path, filter_path: Option<&str>) -> String",
+        "params": "graph: &CodeGraph, root: &Path, filter_path: Option<&str>",
+        "return_type": "String",
+        "start_line": 415,
+        "end_line": 415,
+        "parent": "impl CodeGraph"
+      },
+      {
+        "name": "query_symbol",
+        "kind": "function",
+        "signature": "fn query_symbol(graph: &CodeGraph, query: &str) -> Vec<Value>",
+        "params": "graph: &CodeGraph, query: &str",
+        "return_type": "Vec<Value>",
+        "start_line": 480,
+        "end_line": 480,
+        "parent": "impl CodeGraph"
+      },
+      {
+        "name": "trace_call_flow",
+        "kind": "function",
+        "signature": "fn trace_call_flow(graph: &CodeGraph, symbol: &str, depth: usize) -> String",
+        "params": "graph: &CodeGraph, symbol: &str, depth: usize",
+        "return_type": "String",
+        "start_line": 542,
+        "end_line": 542,
+        "parent": "impl CodeGraph"
+      },
+      {
+        "name": "trace_rec",
+        "kind": "function",
+        "signature": "fn trace_rec( graph: &CodeGraph, curr_id: &str, curr_depth: usize, max_depth: usize, indent: usize, visited: &mut HashSet<String>, lines: &mut Vec<String>, )",
+        "params": "graph: &CodeGraph, curr_id: &str, curr_depth: usize, max_depth: usize, indent: usize, visited: &mut HashSet<String>, lines: &mut Vec<String>,",
+        "return_type": null,
+        "start_line": 576,
+        "end_line": 584,
+        "parent": "impl CodeGraph"
+      },
+      {
+        "name": "trace_impact_analysis",
+        "kind": "function",
+        "signature": "fn trace_impact_analysis(graph: &CodeGraph, symbol: &str, depth: usize) -> String",
+        "params": "graph: &CodeGraph, symbol: &str, depth: usize",
+        "return_type": "String",
+        "start_line": 638,
+        "end_line": 638,
+        "parent": "impl CodeGraph"
+      },
+      {
+        "name": "trace_up_rec",
+        "kind": "function",
+        "signature": "fn trace_up_rec( graph: &CodeGraph, curr_id: &str, curr_depth: usize, max_depth: usize, indent: usize, visited: &mut HashSet<String>, lines: &mut Vec<String>, )",
+        "params": "graph: &CodeGraph, curr_id: &str, curr_depth: usize, max_depth: usize, indent: usize, visited: &mut HashSet<String>, lines: &mut Vec<String>,",
+        "return_type": null,
+        "start_line": 653,
+        "end_line": 661,
+        "parent": "impl CodeGraph"
+      }
+    ]
+  },
+  "rust-mcp/src/tools/search.rs": {
+    "path": "rust-mcp/src/tools/search.rs",
+    "language": "Rust",
+    "total_lines": 191,
+    "mtime_secs": 1789705867,
+    "file_size": 6381,
+    "types": [],
+    "methods": [
+      {
+        "name": "execute_search",
+        "kind": "function",
+        "signature": "pub fn execute_search(params: &Value, default_root: Option<&str>) -> String",
+        "params": "params: &Value, default_root: Option<&str>",
+        "return_type": "String",
+        "start_line": 10,
+        "end_line": 10,
+        "parent": null
+      },
+      {
+        "name": "collect_terms",
+        "kind": "function",
+        "signature": "fn collect_terms(params: &Value) -> Vec<String>",
+        "params": "params: &Value",
+        "return_type": "Vec<String>",
+        "start_line": 166,
+        "end_line": 166,
+        "parent": null
+      },
+      {
+        "name": "path_relative_to",
+        "kind": "function",
+        "signature": "fn path_relative_to(path: &Path, base: &Path) -> String",
+        "params": "path: &Path, base: &Path",
+        "return_type": "String",
+        "start_line": 186,
+        "end_line": 186,
+        "parent": null
+      }
+    ]
+  },
+  "rust-mcp/src/tools/workspace.rs": {
+    "path": "rust-mcp/src/tools/workspace.rs",
+    "language": "Rust",
+    "total_lines": 419,
+    "mtime_secs": 1789788325,
+    "file_size": 14918,
+    "types": [
+      {
+        "name": "WorkspaceManager",
+        "kind": "struct",
+        "line": 161
+      },
+      {
+        "name": "impl WorkspaceManager",
+        "kind": "impl",
+        "line": 166
+      },
+      {
+        "name": "WorkspaceCache",
+        "kind": "struct",
+        "line": 297
+      }
+    ],
+    "methods": [
+      {
+        "name": "resolve_root",
+        "kind": "function",
+        "signature": "pub fn resolve_root(params: &Value, key: &str, default_root: Option<&str>) -> Result<String, String>",
+        "params": "params: &Value, key: &str, default_root: Option<&str>",
+        "return_type": "Result<String, String>",
+        "start_line": 10,
+        "end_line": 10,
+        "parent": null
+      },
+      {
+        "name": "resolve_existing_root",
+        "kind": "function",
+        "signature": "pub fn resolve_existing_root(params: &Value, key: &str, default_root: Option<&str>) -> Result<String, String>",
+        "params": "params: &Value, key: &str, default_root: Option<&str>",
+        "return_type": "Result<String, String>",
+        "start_line": 26,
+        "end_line": 26,
+        "parent": null
+      },
+      {
+        "name": "workspaces_registry_file",
+        "kind": "function",
+        "signature": "fn workspaces_registry_file() -> PathBuf",
+        "params": "",
+        "return_type": "PathBuf",
+        "start_line": 39,
+        "end_line": 39,
+        "parent": null
+      },
+      {
+        "name": "is_valid_project_dir",
+        "kind": "function",
+        "signature": "fn is_valid_project_dir(path: &Path) -> bool",
+        "params": "path: &Path",
+        "return_type": "bool",
+        "start_line": 50,
+        "end_line": 50,
+        "parent": null
+      },
+      {
+        "name": "read_legacy_workspace",
+        "kind": "function",
+        "signature": "fn read_legacy_workspace() -> Option<String>",
+        "params": "",
+        "return_type": "Option<String>",
+        "start_line": 82,
+        "end_line": 82,
+        "parent": null
+      },
+      {
+        "name": "parse_file_uri",
+        "kind": "function",
+        "signature": "pub fn parse_file_uri(uri: &str) -> String",
+        "params": "uri: &str",
+        "return_type": "String",
+        "start_line": 123,
+        "end_line": 123,
+        "parent": null
+      },
+      {
+        "name": "new",
+        "kind": "function",
+        "signature": "pub fn new() -> Self",
+        "params": "",
+        "return_type": "Self",
+        "start_line": 167,
+        "end_line": 167,
+        "parent": "impl WorkspaceManager"
+      },
+      {
+        "name": "load_registry",
+        "kind": "function",
+        "signature": "pub fn load_registry(&mut self)",
+        "params": "&mut self",
+        "return_type": null,
+        "start_line": 196,
+        "end_line": 196,
+        "parent": "impl WorkspaceManager"
+      },
+      {
+        "name": "save_registry",
+        "kind": "function",
+        "signature": "pub fn save_registry(&self)",
+        "params": "&self",
+        "return_type": null,
+        "start_line": 211,
+        "end_line": 211,
+        "parent": "impl WorkspaceManager"
+      },
+      {
+        "name": "register_and_activate",
+        "kind": "function",
+        "signature": "pub fn register_and_activate(&mut self, path_str: &str, custom_alias: Option<&str>)",
+        "params": "&mut self, path_str: &str, custom_alias: Option<&str>",
+        "return_type": null,
+        "start_line": 219,
+        "end_line": 219,
+        "parent": "impl WorkspaceManager"
+      },
+      {
+        "name": "switch_workspace",
+        "kind": "function",
+        "signature": "pub fn switch_workspace(&mut self, query: &str) -> Result<String, String>",
+        "params": "&mut self, query: &str",
+        "return_type": "Result<String, String>",
+        "start_line": 244,
+        "end_line": 244,
+        "parent": "impl WorkspaceManager"
+      },
+      {
+        "name": "get_current",
+        "kind": "function",
+        "signature": "pub fn get_current(&self) -> Option<String>",
+        "params": "&self",
+        "return_type": "Option<String>",
+        "start_line": 269,
+        "end_line": 269,
+        "parent": "impl WorkspaceManager"
+      },
+      {
+        "name": "get_known_workspaces",
+        "kind": "function",
+        "signature": "pub fn get_known_workspaces(&self) -> HashMap<String, String>",
+        "params": "&self",
+        "return_type": "HashMap<String, String>",
+        "start_line": 273,
+        "end_line": 273,
+        "parent": "impl WorkspaceManager"
+      },
+      {
+        "name": "cache_path",
+        "kind": "function",
+        "signature": "fn cache_path(workspace: &str) -> PathBuf",
+        "params": "workspace: &str",
+        "return_type": "PathBuf",
+        "start_line": 280,
+        "end_line": 280,
+        "parent": "impl WorkspaceManager"
+      },
+      {
+        "name": "read_cache",
+        "kind": "function",
+        "signature": "fn read_cache(workspace: &str) -> WorkspaceCache",
+        "params": "workspace: &str",
+        "return_type": "WorkspaceCache",
+        "start_line": 302,
+        "end_line": 302,
+        "parent": "WorkspaceCache"
+      },
+      {
+        "name": "write_cache",
+        "kind": "function",
+        "signature": "fn write_cache(workspace: &str, cache: &WorkspaceCache)",
+        "params": "workspace: &str, cache: &WorkspaceCache",
+        "return_type": null,
+        "start_line": 338,
+        "end_line": 338,
+        "parent": "WorkspaceCache"
+      },
+      {
+        "name": "cache_put",
+        "kind": "function",
+        "signature": "fn cache_put(workspace: &str, filename: &str, rel_path: &str)",
+        "params": "workspace: &str, filename: &str, rel_path: &str",
+        "return_type": null,
+        "start_line": 347,
+        "end_line": 347,
+        "parent": "WorkspaceCache"
+      },
+      {
+        "name": "resolve_file_in_workspace",
+        "kind": "function",
+        "signature": "pub fn resolve_file_in_workspace(root: &Path, name: &str, workspace: &str) -> Result<PathBuf, String>",
+        "params": "root: &Path, name: &str, workspace: &str",
+        "return_type": "Result<PathBuf, String>",
+        "start_line": 363,
+        "end_line": 363,
+        "parent": "WorkspaceCache"
+      }
+    ]
+  },
+  "rust-mcp/src/tools/symbols.rs": {
+    "path": "rust-mcp/src/tools/symbols.rs",
+    "language": "Rust",
+    "total_lines": 53,
+    "mtime_secs": 1789705867,
+    "file_size": 1659,
+    "types": [],
+    "methods": [
+      {
+        "name": "execute_symbols",
+        "kind": "function",
+        "signature": "pub fn execute_symbols(params: &Value, default_root: Option<&str>) -> String",
+        "params": "params: &Value, default_root: Option<&str>",
+        "return_type": "String",
+        "start_line": 8,
+        "end_line": 8,
+        "parent": null
+      }
+    ]
+  },
+  "rust-mcp/src/parsers/c_family.rs": {
+    "path": "rust-mcp/src/parsers/c_family.rs",
+    "language": "Rust",
+    "total_lines": 101,
+    "mtime_secs": 1790668373,
+    "file_size": 3973,
+    "types": [
+      {
+        "name": "CppParser",
+        "kind": "struct",
+        "line": 4
+      },
+      {
+        "name": "impl LanguageParser for CppParser",
+        "kind": "impl",
+        "line": 6
+      }
+    ],
+    "methods": [
+      {
+        "name": "language_name",
+        "kind": "function",
+        "signature": "fn language_name(&self) -> &'static str",
+        "params": "&self",
+        "return_type": "&'static str",
+        "start_line": 7,
+        "end_line": 7,
+        "parent": "impl LanguageParser for CppParser"
+      },
+      {
+        "name": "extensions",
+        "kind": "function",
+        "signature": "fn extensions(&self) -> &[&'static str]",
+        "params": "&self",
+        "return_type": "&[&'static str]",
+        "start_line": 11,
+        "end_line": 11,
+        "parent": "impl LanguageParser for CppParser"
+      },
+      {
+        "name": "parse",
+        "kind": "function",
+        "signature": "fn parse(&self, lines: &[&str]) -> (Vec<TypeInfo>, Vec<MethodSignature>)",
+        "params": "&self, lines: &[&str]) -> (Vec<TypeInfo>, Vec<MethodSignature>",
+        "return_type": "(Vec<TypeInfo>, Vec<MethodSignature>)",
+        "start_line": 15,
+        "end_line": 15,
+        "parent": "impl LanguageParser for CppParser"
+      }
+    ]
+  }
+}

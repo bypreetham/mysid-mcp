@@ -2,6 +2,7 @@ use serde_json::{json, Value};
 use std::path::Path;
 use std::process::Command;
 
+use super::{build_log, build_rust};
 use super::workspace::resolve_existing_root;
 
 const MAX_OUTPUT_BYTES: usize = 32_768;
@@ -26,7 +27,9 @@ pub fn execute_build(params: &Value, default_root: Option<&str>) -> String {
 
     if let Some(ref extra) = extra_args {
         let trimmed = extra.trim();
-        if trimmed.eq_ignore_ascii_case("release") || trimmed.eq_ignore_ascii_case("aab") {
+        // `release` means an Android AAB, except in a Cargo workspace where it means `--release`.
+        let is_cargo = Path::new(&workspace_root).join("Cargo.toml").exists();
+        if !is_cargo && (trimmed.eq_ignore_ascii_case("release") || trimmed.eq_ignore_ascii_case("aab")) {
             return execute_release(params, default_root);
         }
     }
@@ -178,24 +181,20 @@ pub fn execute_build(params: &Value, default_root: Option<&str>) -> String {
         };
         ("React/Node (npm run build)".to_string(), prog, a)
     } else if root.join("Cargo.toml").exists() {
-        // 3. Rust (cargo)
-        let cargo_bin = if let Ok(user_dir) = std::env::var("USERPROFILE") {
-            let user_cargo = Path::new(&user_dir).join(".cargo").join("bin").join("cargo.exe");
-            if user_cargo.exists() {
-                user_cargo.to_string_lossy().to_string()
-            } else {
-                "cargo".to_string()
-            }
-        } else {
-            "cargo".to_string()
-        };
+        // 3. Rust (cargo): short diagnostics, summarized after the run
+        let wants_release = params.get("release").and_then(|v| v.as_bool()).unwrap_or(false)
+            || extra_args.as_deref().map(|e| e.trim().eq_ignore_ascii_case("release")).unwrap_or(false);
         let mut a = vec!["build".to_string()];
+        if wants_release {
+            a.push("--release".to_string());
+        }
         if let Some(extra) = &extra_args {
-            if !extra.trim().is_empty() {
-                a.push(extra.trim().to_string());
+            let e = extra.trim();
+            if !e.is_empty() && !e.eq_ignore_ascii_case("release") {
+                a.push(e.to_string());
             }
         }
-        ("Rust (Cargo)".to_string(), cargo_bin, a)
+        ("Rust (Cargo)".to_string(), build_rust::find_cargo(), a)
     } else if root.join("pyproject.toml").exists() || root.join("setup.py").exists() {
         // 4. Python
         let python_bin = if root.join("venv").join("Scripts").join("python.exe").exists() {
@@ -212,15 +211,21 @@ pub fn execute_build(params: &Value, default_root: Option<&str>) -> String {
         .to_string();
     };
 
-    use std::io::Write;
-    println!("build started...");
-    let _ = std::io::stdout().flush();
+    // Full output streams live to <workspace>/.mysid/build.log; the caller gets a short summary.
+    let log_path = match build_log::ensure_dir(Path::new(&workspace_root)) {
+        Ok(dir) => dir.join(build_log::BUILD_LOG),
+        Err(_) => std::env::temp_dir().join("mysid-build.log"),
+    };
+    let log_display = format!("{}/{}", build_log::MYSID_DIR, build_log::BUILD_LOG);
+    eprintln!("build started... (live log: {})", log_display);
 
     let mut cmd = Command::new(&program);
     cmd.args(&args);
     cmd.current_dir(root);
 
-    let output = match cmd.output() {
+    let started = std::time::Instant::now();
+    let title = format!("mysid build [{}] {} {}", stack_name, program, args.join(" "));
+    let output = match build_log::run_logged(cmd, &log_path, &title) {
         Ok(out) => out,
         Err(e) => {
             return json!({
@@ -233,8 +238,28 @@ pub fn execute_build(params: &Value, default_root: Option<&str>) -> String {
     };
 
     let exit_code = output.status.code().unwrap_or(-1);
-    let mut stdout_str = String::from_utf8_lossy(&output.stdout).to_string();
-    let mut stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if stack_name == "Rust (Cargo)" {
+        let show_warnings = params.get("warnings").and_then(|v| v.as_bool()).unwrap_or(true);
+        let summary = build_rust::summarize(
+            &output.stdout,
+            &output.stderr,
+            output.status.success(),
+            started.elapsed(),
+            show_warnings,
+        );
+        return json!({
+            "success": output.status.success(),
+            "stack": stack_name,
+            "exit_code": exit_code,
+            "output": format!("{}
+log: {}", summary, log_display)
+        })
+        .to_string();
+    }
+
+    let mut stdout_str = output.stdout.clone();
+    let mut stderr_str = output.stderr.clone();
 
     if stdout_str.len() > MAX_OUTPUT_BYTES {
         let start = stdout_str.len() - MAX_OUTPUT_BYTES;
@@ -274,7 +299,8 @@ pub fn execute_build(params: &Value, default_root: Option<&str>) -> String {
         "stack": stack_name,
         "exit_code": exit_code,
         "stdout": final_stdout,
-        "stderr": final_stderr
+        "stderr": final_stderr,
+        "log": log_display
     })
     .to_string()
 }
