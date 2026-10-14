@@ -9,6 +9,7 @@ on:
       - 'rust-mcp/**'
       - 'package-portable.ps1'
       - 'install.ps1'
+      - 'install.sh'
       - '.github/workflows/release.yml'
   workflow_dispatch:
 
@@ -17,7 +18,7 @@ permissions:
 
 jobs:
   build-windows:
-    name: Build & Publish Windows Release
+    name: Build Windows
     runs-on: windows-latest
 
     steps:
@@ -44,28 +45,112 @@ jobs:
           powershell -ExecutionPolicy Bypass -File .\package-portable.ps1 -SkipBuild
         shell: pwsh
 
+      - name: Collect release files
+        run: |
+          New-Item -ItemType Directory -Path out | Out-Null
+          Copy-Item dist/mysid-windows-x64.zip out/
+          Copy-Item rust-mcp/target/release/mysid.exe out/
+        shell: pwsh
+
+      - name: Upload Windows files
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: out/*
+
+  build-unix:
+    name: Build ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, asset: mysid-linux-x64 }
+          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu, asset: mysid-linux-arm64 }
+          - { os: macos-latest, target: aarch64-apple-darwin, asset: mysid-macos-arm64 }
+          - { os: macos-latest, target: x86_64-apple-darwin, asset: mysid-macos-x64 }
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            rust-mcp -> target
+          key: ${{ matrix.target }}
+
+      - name: Compile mysid Release Binary
+        run: |
+          cd rust-mcp
+          cargo build --release --target ${{ matrix.target }}
+        shell: bash
+
+      - name: Check that it runs
+        # The x86_64 macOS build runs on the arm64 runner through Rosetta.
+        run: |
+          ./rust-mcp/target/${{ matrix.target }}/release/mysid help | head -3
+        shell: bash
+
+      - name: Collect release file
+        run: |
+          mkdir -p out
+          cp rust-mcp/target/${{ matrix.target }}/release/mysid out/${{ matrix.asset }}
+          chmod +x out/${{ matrix.asset }}
+        shell: bash
+
+      - name: Upload ${{ matrix.asset }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: out/${{ matrix.asset }}
+
+  publish:
+    name: Publish rolling release
+    needs: [build-windows, build-unix]
+    # Windows is published even when a Linux or macOS build fails; those files are added when they built.
+    if: ${{ always() && needs.build-windows.result == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download build files
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Publish / Update Rolling Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           name: "mysid (Latest Build)"
           body: |
-            ## High-Performance Standalone Codebase Intelligence & Native MCP Server
+            ## Codebase intelligence for LLM agents: one binary, command line and MCP server
 
-            ### Direct Download Links:
-            - **Standalone Executable**: [`mysid.exe`](https://github.com/${{ github.repository }}/releases/latest/download/mysid.exe)
-            - **Portable Bundle (Zero Dependencies)**: [`mysid-windows-x64.zip`](https://github.com/${{ github.repository }}/releases/latest/download/mysid-windows-x64.zip)
+            ### Install
+            - **Windows (PowerShell):** `Invoke-WebRequest https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1 -OutFile install.ps1; powershell -ExecutionPolicy Bypass -File .\install.ps1 -Download`
+            - **macOS / Linux:** `curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh`
 
-            ### Installation:
-            Download and extract `mysid-windows-x64.zip`, then run:
-            ```powershell
-            .\install.ps1
-            ```
-            This registers `mysid` into your User `PATH` and auto-configures Gemini Antigravity & Claude Desktop.
+            ### Direct downloads
+            - Windows: `mysid.exe`, or the portable bundle `mysid-windows-x64.zip`
+            - Linux: `mysid-linux-x64`, `mysid-linux-arm64`
+            - macOS: `mysid-macos-arm64` (Apple Silicon), `mysid-macos-x64` (Intel)
+            - `SHA256SUMS` lists the checksum of every file.
           draft: false
           prerelease: false
           files: |
-            dist/mysid-windows-x64.zip
-            rust-mcp/target/release/mysid.exe
+            artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

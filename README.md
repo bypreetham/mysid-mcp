@@ -22,39 +22,51 @@ audit trail, so an agent spends tokens on the task and not on the tooling.
 mysid help
 ```
 
+macOS and Linux (prebuilt binary, no Rust needed):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/bypreetham/mysid-mcp/main/install.sh | sh
+mysid help
+```
+
 MCP clients (Claude Desktop, Antigravity/Gemini, Cursor, Cline): `{ "mcpServers": { "mysid": { "command": "mysid", "args": [] } } }`
 
 ### For agents: let Claude install it
 
-Copy everything in the box below into Claude Code (or any assistant that can run commands). It installs mysid, puts it on `PATH`,
-registers the MCP server and checks that it works.
+Copy everything in the box below into Claude Code (or any assistant that can run commands). It downloads the latest prebuilt
+mysid for this system from GitHub Releases (no Rust, no clone), puts it on `PATH`, registers the MCP server and checks that it works.
 
 ```text
-Install mysid on this machine and set it up. Repository: https://github.com/bypreetham/mysid-mcp
+Install mysid on this machine and set it up. The latest build is published at
+https://github.com/bypreetham/mysid-mcp/releases/tag/latest
 
-1. If `mysid help` already runs, skip to step 4.
-2. mysid is built with Rust. If `cargo --version` fails, install Rust from https://rustup.rs
-   (Windows also needs the "Desktop development with C++" build tools; rustup tells you).
-3. Get the code and install:
-   - Ask me which folder to clone into, then: git clone https://github.com/bypreetham/mysid-mcp.git
-   - Windows (PowerShell): cd mysid-mcp; powershell -ExecutionPolicy Bypass -File .\install.ps1
-     It builds, copies mysid.exe to %LOCALAPPDATA%\mysid\bin, adds that folder to the user PATH, and registers the
-     MCP server for Claude Code (`claude mcp add --scope user mysid -- mysid`), Claude Desktop and Antigravity/Gemini
-     when they are installed.
-   - macOS / Linux: cd mysid-mcp/rust-mcp && cargo build --release && mkdir -p ~/.local/bin &&
-     cp target/release/mysid ~/.local/bin/ (make sure ~/.local/bin is on PATH), then register the server yourself:
-     `claude mcp add --scope user mysid -- mysid`
-4. Check it in a NEW terminal (the old one has the old PATH): `mysid help` must print "mysid: code intelligence for LLM agents"
-   and the numbered command list. If the command is not found, show me the PATH folder you installed to and fix PATH.
-5. Other MCP clients: add { "mcpServers": { "mysid": { "command": "mysid", "args": [] } } } to their config.
-6. Tell me to restart the client, and that inside a project folder the first command is `mysid set .`, then `mysid help`.
+1. If `mysid help` already runs, skip to step 3.
+2. Install, by system:
+   - Windows (PowerShell):
+       Invoke-WebRequest https://raw.githubusercontent.com/bypreetham/mysid-mcp/main/install.ps1 -OutFile "$env:TEMP\mysid-install.ps1"
+       powershell -ExecutionPolicy Bypass -File "$env:TEMP\mysid-install.ps1" -Download
+     It copies mysid.exe to %LOCALAPPDATA%\mysid\bin and adds that folder to my user PATH.
+   - macOS or Linux:
+       curl -fsSL https://raw.githubusercontent.com/bypreetham/mysid-mcp/main/install.sh | sh
+     It picks the build for this system (Linux or macOS, x86_64 or arm64), checks its checksum, copies it to ~/.local/bin
+     and adds that folder to my shell profile when it is not on PATH.
+   Both scripts check that the download runs before replacing anything, and register the MCP server for Claude Code, Claude
+   Desktop and Antigravity/Gemini when they are installed. If the `claude` command exists but registration was skipped, run:
+     claude mcp add --scope user mysid -- mysid
+3. Check it in a NEW terminal (this one has the old PATH): `mysid help` must print "mysid: code intelligence for LLM agents"
+   and a numbered command list. If the command is not found, tell me which folder it was installed to and fix PATH.
+4. Other MCP clients: add { "mcpServers": { "mysid": { "command": "mysid", "args": [] } } } to their config.
+5. Tell me to restart the client, and that inside a project folder the first command is `mysid set .`, then `mysid help`.
 
 Rules: change only what these steps say. Do not commit, push or edit any project. Do not touch my other MCP servers or
 settings. Do not add yourself as an author or co-author anywhere. Report each step as done or failed, with the error text.
 ```
 
-To update later, ask Claude to run `git pull` in the clone and `mysid install` from `mysid-mcp/rust-mcp` (it replaces the
-running copy safely); reload the MCP client afterwards.
+If there is no prebuilt file for a system (the installer says so), build from source: clone the repository, run
+`cargo build --release` in `rust-mcp`, and copy `target/release/mysid` to a folder on PATH.
+
+To update later, run the same installer again (it replaces the running copy safely) and reload the MCP client. Every file on
+the release has its checksum in `SHA256SUMS`.
 
 ## The usual flow
 

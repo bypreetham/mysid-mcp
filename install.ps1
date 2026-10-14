@@ -4,7 +4,9 @@
 #>
 [CmdletBinding()]
 param(
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    # Download the latest prebuilt mysid.exe from GitHub Releases (no Rust, no source needed)
+    [switch]$Download
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,31 +43,49 @@ if (-not $SourceExe) {
     }
 }
 
-# Compile if needed
-if (-not $SourceExe -and -not $SkipBuild) {
-    if (-not $ProjectDir) {
-        Write-Error "Could not locate rust-mcp project directory or precompiled mysid.exe."
+# Prebuilt binary: the GitHub release that the repository's workflow publishes on every push to main
+$ReleaseUrl = "https://github.com/bypreetham/mysid-mcp/releases/download/latest/mysid.exe"
+function Get-ReleaseExe {
+    Write-Host "[1/4] Downloading the latest mysid.exe from GitHub Releases..." -ForegroundColor Yellow
+    $TmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("mysid-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $TmpDir | Out-Null
+    $Tmp = Join-Path $TmpDir "mysid.exe"
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Invoke-WebRequest -Uri $ReleaseUrl -OutFile $Tmp -UseBasicParsing
+    if ((Get-Item $Tmp).Length -lt 1MB) {
+        Write-Error "The download from $ReleaseUrl is too small to be mysid.exe."
         exit 1
     }
+    # It must run and say what it is before it replaces anything.
+    $Probe = & $Tmp help 2>&1 | Out-String
+    if ($Probe -notmatch "code intelligence") {
+        Write-Error "The downloaded file did not behave like mysid (mysid help printed something else)."
+        exit 1
+    }
+    return $Tmp
+}
 
-    Write-Host "[1/4] Compiling latest mysid release binary via Cargo..." -ForegroundColor Yellow
+if ($Download) {
+    $SourceExe = Get-ReleaseExe
+} elseif (-not $SourceExe -and -not $SkipBuild) {
     $Cargo = (Get-Command "cargo" -ErrorAction SilentlyContinue).Source
     if (-not $Cargo) {
         # rustup keeps cargo in the toolchain folder even when ~/.cargo/bin is not on PATH
         $Cargo = Get-ChildItem (Join-Path $env:USERPROFILE ".rustup\toolchains\*\bin\cargo.exe") -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
     }
-    if (-not $Cargo) {
-        Write-Error "Cargo not found. Please install Rust or provide a precompiled binary."
-        exit 1
+    if ($ProjectDir -and $Cargo) {
+        Write-Host "[1/4] Compiling latest mysid release binary via Cargo..." -ForegroundColor Yellow
+        Push-Location $ProjectDir
+        try {
+            & $Cargo build --release
+        } finally {
+            Pop-Location
+        }
+        $SourceExe = Join-Path $ProjectDir "target\release\mysid.exe"
+    } else {
+        Write-Host "No Rust toolchain or source here: using the prebuilt release instead." -ForegroundColor Yellow
+        $SourceExe = Get-ReleaseExe
     }
-
-    Push-Location $ProjectDir
-    try {
-        & $Cargo build --release
-    } finally {
-        Pop-Location
-    }
-    $SourceExe = Join-Path $ProjectDir "target\release\mysid.exe"
 }
 
 if (-not (Test-Path $SourceExe)) {
