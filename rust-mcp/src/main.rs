@@ -1181,7 +1181,7 @@ fn get_root_help() -> &'static str {
    3. mysid overview <file.ext>        classes, functions and signatures with line numbers (no code)
    4. mysid read <file.ext>#L10-60     the code snippet (a SymbolName instead of a file works too)
    5. mysid search "text" [--types kt,ts] [--regex] [--context 1] [--group] [--count] [--max N] [--offset N]
-                                       where is it? --count = matching lines per file; --offset pages; --all also searches md/txt
+                                       where is it? Shows 15 hits; if cut, the last line gives the --offset N for the next page (--max N shows more). --count = matches per file; --all also searches md/txt
    6. mysid graph <symbol> [--depth N]   callers and callees; --depth N = N hops (max 5, default 1); a file name: what it calls and who calls it
    7. change code, any of three:
         mysid patch <file> --stdin [--show]   exact old text. ALWAYS give code via --stdin (old text, a line with only =======, new text) or --old-file a --new-file b: quotes, $ and backslashes then never matter. --show = also print the removed (-) and added (+) lines, so you need not re-read the file

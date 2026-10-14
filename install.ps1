@@ -49,9 +49,10 @@ if (-not $SourceExe -and -not $SkipBuild) {
     }
 
     Write-Host "[1/4] Compiling latest mysid release binary via Cargo..." -ForegroundColor Yellow
-    $Cargo = "C:\Users\harip\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\cargo.exe"
-    if (-not (Test-Path $Cargo)) {
-        $Cargo = (Get-Command "cargo" -ErrorAction SilentlyContinue).Source
+    $Cargo = (Get-Command "cargo" -ErrorAction SilentlyContinue).Source
+    if (-not $Cargo) {
+        # rustup keeps cargo in the toolchain folder even when ~/.cargo/bin is not on PATH
+        $Cargo = Get-ChildItem (Join-Path $env:USERPROFILE ".rustup\toolchains\*\bin\cargo.exe") -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
     }
     if (-not $Cargo) {
         Write-Error "Cargo not found. Please install Rust or provide a precompiled binary."
@@ -137,14 +138,12 @@ if (($env:PATH -split ";") -notcontains $InstallDir) {
     $env:PATH = "$InstallDir;$env:PATH"
 }
 
-# 5. MCP Auto-Registration
-$GeminiConfigDir = Join-Path $env:USERPROFILE ".gemini\config"
-if (Test-Path $GeminiConfigDir) {
-    $GeminiMcp = Join-Path $GeminiConfigDir "mcp_config.json"
+# 5. MCP auto-registration: every client whose config folder exists gets { "mysid": { "command": "mysid", "args": [] } }
+function Register-McpJson ($ConfigFile, $Label) {
     try {
         $obj = $null
-        if (Test-Path $GeminiMcp) {
-            $raw = Get-Content $GeminiMcp -Raw
+        if (Test-Path $ConfigFile) {
+            $raw = Get-Content $ConfigFile -Raw
             if (-not [string]::IsNullOrWhiteSpace($raw)) {
                 $obj = $raw | ConvertFrom-Json
             }
@@ -160,11 +159,41 @@ if (Test-Path $GeminiConfigDir) {
         } else {
             $obj.mcpServers | Add-Member -MemberType NoteProperty -Name "mysid" -Value $mysidServer -Force
         }
-        $obj | ConvertTo-Json -Depth 5 | Set-Content $GeminiMcp -Encoding utf8
-        Write-Host "  -> Registered in Antigravity/Gemini: $GeminiMcp" -ForegroundColor Green
+        $obj | ConvertTo-Json -Depth 8 | Set-Content $ConfigFile -Encoding utf8
+        Write-Host "  -> Registered in ${Label}: $ConfigFile" -ForegroundColor Green
     } catch {
-        Write-Warning "Failed updating Gemini config: $_"
+        Write-Warning "Failed updating ${Label} config: $_"
     }
+}
+
+# Antigravity / Gemini
+$GeminiConfigDir = Join-Path $env:USERPROFILE ".gemini\config"
+if (Test-Path $GeminiConfigDir) {
+    Register-McpJson (Join-Path $GeminiConfigDir "mcp_config.json") "Antigravity/Gemini"
+}
+
+# Claude Desktop
+$ClaudeDesktopDir = Join-Path $env:APPDATA "Claude"
+if (Test-Path $ClaudeDesktopDir) {
+    Register-McpJson (Join-Path $ClaudeDesktopDir "claude_desktop_config.json") "Claude Desktop (restart it to load mysid)"
+}
+
+# Claude Code (the `claude` command): user scope, so every project has mysid
+$ClaudeCli = Get-Command "claude" -ErrorAction SilentlyContinue
+if ($ClaudeCli) {
+    & claude mcp get mysid *> $null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  -> Claude Code: mysid is already registered." -ForegroundColor Green
+    } else {
+        & claude mcp add --scope user mysid -- mysid
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  -> Registered in Claude Code (user scope). Start a new Claude Code session to load it." -ForegroundColor Green
+        } else {
+            Write-Warning "Could not register in Claude Code. Run by hand:  claude mcp add --scope user mysid -- mysid"
+        }
+    }
+} else {
+    Write-Host "  -> Claude Code CLI not found; if you use it, run:  claude mcp add --scope user mysid -- mysid" -ForegroundColor Yellow
 }
 
 Write-Host "`n-----------------------------------------" -ForegroundColor Green
