@@ -1,4 +1,4 @@
-use super::{gather_multiline_signature, LanguageParser, MethodSignature, TypeInfo};
+use super::{TypeScopes, gather_multiline_signature, LanguageParser, MethodSignature, TypeInfo};
 use regex::Regex;
 
 pub struct SwiftParser;
@@ -26,7 +26,7 @@ impl LanguageParser for SwiftParser {
         .unwrap();
         let init_re = Regex::new(r"^\s*(?:(?:public|private|internal)\s+)*init\s*\(").unwrap();
 
-        let mut current_type: Option<String> = None;
+        let mut scopes = TypeScopes::new();
 
         for (idx, &line) in lines.iter().enumerate() {
             let trimmed = line.trim();
@@ -42,8 +42,10 @@ impl LanguageParser for SwiftParser {
                     kind: kind.to_string(),
                     line: idx + 1,
                 });
-                current_type = Some(name.to_string());
+                scopes.enter(name);
             }
+
+            let current_type = scopes.current();
 
             if let Some(caps) = func_re.captures(trimmed) {
                 let name = caps.get(1).map_or("", |m| m.as_str()).to_string();
@@ -73,6 +75,7 @@ impl LanguageParser for SwiftParser {
                     parent: current_type.clone(),
                 });
             }
+            scopes.end_line(line, lines.get(idx + 1).copied());
         }
 
         (types, methods)

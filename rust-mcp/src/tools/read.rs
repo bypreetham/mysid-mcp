@@ -1,13 +1,46 @@
-use ignore::WalkBuilder;
-use regex::Regex;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
-use super::overview::execute_overview;
 use super::workspace::{resolve_file_in_workspace, resolve_root};
-use crate::adapters::detect_adapter;
-use crate::parsers::is_supported_extension;
+use crate::index::{Index, Located, SymbolId, SymbolKind};
+use crate::parsers::{find_parser, is_supported_extension};
+
+/// Lines `mysid read File` returns when no range is given.
+const DEFAULT_WINDOW: usize = 120;
+/// A source file longer than this is not printed whole by a bare `mysid read File`: the outline and a hint come back.
+const OUTLINE_ABOVE: usize = 150;
+/// Outline entries shown by that reply.
+const OUTLINE_LINES: usize = 90;
+
+/// The reply to a bare `mysid read BigFile.ext`: the outline (what is where, with line numbers) and how to get the code.
+fn outline_reply(project_path: &str, shown: &str, total: usize) -> Option<String> {
+    let raw = super::overview::execute_overview(
+        &serde_json::json!({ "path": shown, "project_path": project_path, "workspace_root": project_path }),
+        Some(project_path),
+    );
+    let text = serde_json::from_str::<Value>(&raw).ok().and_then(|v| v.get("output").and_then(|o| o.as_str()).map(String::from)).unwrap_or(raw);
+    let entries: Vec<&str> = text.lines().filter(|l| l.trim_start().starts_with("[L")).collect();
+    if entries.is_empty() {
+        return None;
+    }
+    let first_line = entries[0].trim_start().trim_start_matches("[L").split(']').next().and_then(|n| n.parse::<usize>().ok()).unwrap_or(1);
+    let shown_entries: Vec<&str> = entries.iter().take(OUTLINE_LINES).copied().collect();
+    let mut out = format!(
+        "[{}: {} lines. Too long to print whole, so this is the outline (line numbers in brackets). Read code with: mysid read {}#L{}-{}]\n{}",
+        shown,
+        total,
+        shown,
+        first_line,
+        (first_line + 59).min(total),
+        shown_entries.join("\n")
+    );
+    if entries.len() > shown_entries.len() {
+        out.push_str(&format!("\n... {} more entries: mysid overview {}", entries.len() - shown_entries.len(), shown));
+    }
+    out.push_str(&format!("\n[start of the file: mysid read {0}#L1-100   a symbol: mysid read <SymbolName>   search inside: mysid search \"text\" {0}   the file itself, up to 600 lines: mysid read {0} --full]", shown));
+    Some(out)
+}
 
 pub fn execute_read(params: &Value, default_root: Option<&str>) -> String {
     // If explicit batch params are present, delegate to execute_read_batch
@@ -63,20 +96,24 @@ pub fn execute_read(params: &Value, default_root: Option<&str>) -> String {
     }
 
     let rel_file = raw_file;
+    // `--lang kt` / `--lang cpp`: when a name is defined in several languages, pick by language.
+    let lang = params.get("lang").and_then(|v| v.as_str());
 
     // Parse potential #Lstart-end or :start-end in rel_file if offset/limit not provided
     let (clean_rel_file, parsed_start, parsed_end) = parse_line_range_spec(rel_file);
 
     let full_path = match resolve_file_in_workspace(Path::new(&project_path), clean_rel_file, &project_path) {
         Ok(p) => p,
-        Err(_) => {
-            // If target does not look like a file path (no dot, no slash), or wasn't found as a file,
-            // check if it is a symbol name and inspect its definition and call sites!
-            if !clean_rel_file.contains('/') && !clean_rel_file.contains('\\') && (!clean_rel_file.contains('.') || clean_rel_file.contains("::")) {
-                let symbol_result = inspect_symbol_in_workspace(Path::new(&project_path), clean_rel_file, 5);
-                if !symbol_result.is_empty() {
-                    return symbol_result;
-                }
+        Err(resolve_err) => {
+            // Not a file: it may be a symbol (`Name`, `Class.method`, `path:Name`) - ask the index.
+            let symbol_result = inspect_symbol_in_workspace(Path::new(&project_path), clean_rel_file, 5, lang);
+            if !symbol_result.is_empty() {
+                return symbol_result;
+            }
+            // Several files share the name: list them (with the shortest folder that tells them apart), not "not found".
+            let message = super::workspace::resolution_message(&resolve_err);
+            if message.contains("ambiguous") {
+                return format!("ERROR: {}", message);
             }
             return format!("ERROR: File or symbol not found: {clean_rel_file}");
         }
@@ -84,13 +121,14 @@ pub fn execute_read(params: &Value, default_root: Option<&str>) -> String {
 
     if !full_path.is_file() {
         if full_path.is_dir() {
-            return format!("ERROR: '{}' is a directory, not a file. Use 'mysid list_dir {}' to view directory contents.", clean_rel_file, clean_rel_file);
+            return format!(
+                "ERROR: '{0}' is a folder, not a file. Its entries: mysid list {0}   Where the code is: mysid graph {0}",
+                clean_rel_file
+            );
         }
-        if !clean_rel_file.contains('/') && !clean_rel_file.contains('\\') {
-            let symbol_result = inspect_symbol_in_workspace(Path::new(&project_path), clean_rel_file, 5);
-            if !symbol_result.is_empty() {
-                return symbol_result;
-            }
+        let symbol_result = inspect_symbol_in_workspace(Path::new(&project_path), clean_rel_file, 5, lang);
+        if !symbol_result.is_empty() {
+            return symbol_result;
         }
         return format!("ERROR: File not found: {clean_rel_file}");
     }
@@ -103,32 +141,8 @@ pub fn execute_read(params: &Value, default_root: Option<&str>) -> String {
     let lines: Vec<&str> = content.lines().collect();
     let total_lines = lines.len();
 
-    // ── Outline mode delegation ──────────────────────────────────────────────
-    // If no explicit line range or offset is given and the file type is supported
-    // by overview (code or markdown), delegate to execute_overview to get method signatures / section outline!
-    let has_explicit_offset = params.get("offset").is_some()
-        || parsed_start.is_some()
-        || params
-            .get("args")
-            .and_then(|v| v.as_array())
-            .map(|a| a.len() >= 2)
-            .unwrap_or(false);
-
-    let ext = full_path
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
-
-    if !has_explicit_offset && is_supported_extension(ext) {
-        let mut overview_params = params.clone();
-        if let Some(obj) = overview_params.as_object_mut() {
-            obj.insert("file".to_string(), serde_json::Value::String(clean_rel_file.to_string()));
-            obj.entry("workspace_root")
-                .or_insert_with(|| serde_json::Value::String(project_path.clone()));
-        }
-        return execute_overview(&overview_params, default_root);
-    }
-    // ── End outline mode ─────────────────────────────────────────────────────
+    // `read` always returns code. The outline (types and signatures) is `mysid overview`.
+    let ext = full_path.extension().and_then(|s| s.to_str()).unwrap_or("");
 
     let start_line = int_arg(params, 1, "offset")
         .or(parsed_start)
@@ -150,11 +164,22 @@ pub fn execute_read(params: &Value, default_root: Option<&str>) -> String {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-    let hard_cap = if wants_full { 500 } else { 100 };
+    let hard_cap = if wants_full { 600 } else { 200 };
     let raw_second = int_arg(params, 2, "limit")
         .or_else(|| int_arg(params, 2, "end"))
         .or(parsed_end);
 
+    // A bare read of a long source file: the outline and a hint instead of its first lines.
+    let bare = parsed_start.is_none()
+        && parsed_end.is_none()
+        && raw_second.is_none()
+        && int_arg(params, 1, "offset").is_none()
+        && !wants_full;
+    if bare && total_lines > OUTLINE_ABOVE && is_supported_extension(ext) {
+        if let Some(reply) = outline_reply(&project_path, &clean_rel_file.replace('\\', "/"), total_lines) {
+            return reply;
+        }
+    }
     let end_idx = if wants_full {
         (start_idx + hard_cap).min(total_lines)
     } else {
@@ -168,13 +193,21 @@ pub fn execute_read(params: &Value, default_root: Option<&str>) -> String {
                 }
             }
             Some(limit_count) => (start_idx + limit_count.min(hard_cap)).min(total_lines),
-            None => (start_idx + 50).min(total_lines),
+            None if bare && total_lines <= OUTLINE_ABOVE => total_lines,
+            None => (start_idx + DEFAULT_WINDOW).min(total_lines),
         }
     };
 
     if start_idx >= total_lines {
         if total_lines == 0 {
-            return "(file is empty)".to_string();
+            let (bytes, age) = fs::metadata(&full_path)
+                .ok()
+                .map(|m| {
+                    let age = m.modified().ok().and_then(|t| t.elapsed().ok()).map_or(0, |d| d.as_secs());
+                    (m.len(), age)
+                })
+                .unwrap_or((0, 0));
+            return format!("(file is empty: {} bytes, last modified {}s ago - it may still be being written)", bytes, age);
         }
         return format!(
             "(no lines in range offset={start_line} -- file has {total_lines} lines total)"
@@ -187,14 +220,15 @@ pub fn execute_read(params: &Value, default_root: Option<&str>) -> String {
         .map(|(idx, line)| format!("{}:{}", start_idx + idx + 1, line))
         .collect();
 
-    format!(
-        "[{}:{}-{}/{}]\n{}",
-        clean_rel_file.replace('\\', "/"),
-        start_idx + 1,
-        end_idx,
-        total_lines,
-        slice_lines.join("\n")
-    )
+    let shown = clean_rel_file.replace('\\', "/");
+    let mut out = format!("[{}:{}-{}/{}]\n{}", shown, start_idx + 1, end_idx, total_lines, slice_lines.join("\n"));
+    // No end was asked for and the file goes on: say how to get the rest.
+    if raw_second.is_none() && !wants_full && end_idx < total_lines {
+        let more = format!("mysid read {}#L{}-{}", shown, end_idx + 1, (end_idx + DEFAULT_WINDOW).min(total_lines));
+        let outline = if is_supported_extension(ext) { format!("; signatures only: mysid overview {}", shown) } else { String::new() };
+        out.push_str(&format!("\n[showing {}-{} of {}. More: {}{}]", start_idx + 1, end_idx, total_lines, more, outline));
+    }
+    out
 }
 
 /// Helper to parse specs like "AudioEngine.cpp#L295-325", "DeviceHelper.kt:185-225", or "NativeHiResEngine.kt#L175"
@@ -304,118 +338,187 @@ fn int_arg(params: &Value, args_index: usize, key: &str) -> Option<usize> {
         .or_else(|| arg.as_str().and_then(|s| s.parse().ok()))
 }
 
-pub fn inspect_symbol_in_workspace(project_dir: &Path, symbol: &str, max_callers: usize) -> String {
+/// Longest definition printed; the rest is pointed to with a ready-made range.
+const MAX_DEFINITION_LINES: usize = 150;
+const MAX_LISTED: usize = 8;
+
+/// `--lang` takes an extension (`kt`, `h`) or a language name (`cpp`, `kotlin`): a file matches when it
+/// has that extension or is read by the same parser, so `cpp` also selects `.h` and `.cc` files.
+fn matches_lang(path: &str, wanted: &str) -> bool {
+    let wanted = wanted.trim().trim_start_matches('.').to_ascii_lowercase();
+    let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    if ext == wanted {
+        return true;
+    }
+    match (find_parser(&ext), find_parser(&wanted)) {
+        (Some(file), Some(want)) => file.language_name() == want.language_name(),
+        (Some(file), None) => file.language_name().to_ascii_lowercase().contains(&wanted),
+        _ => false,
+    }
+}
+
+/// Class-like symbols first, then free functions, then methods.
+fn kind_rank(l: &Located) -> u8 {
+    match l.symbol.kind {
+        SymbolKind::Class => 0,
+        SymbolKind::Function => 1,
+        SymbolKind::Method => 2,
+    }
+}
+
+fn describe(l: &Located) -> String {
+    let ext = l.path.rsplit('.').next().unwrap_or("");
+    let name = match &l.symbol.owner {
+        Some(owner) => format!("{}.{}", owner, l.symbol.name),
+        None => l.symbol.name.clone(),
+    };
+    format!("{}:{}  {} [{}, {}]", l.path, l.symbol.start_line, name, l.symbol.detail, ext)
+}
+
+/// Definition and callers of a symbol, from the code index (the same lookup `graph` uses):
+/// exact names, `Class.method`, `path:Name`. Classes win over functions over methods; if several
+/// symbols tie - the same name in two languages, or two modules - they are listed instead of one
+/// being picked arbitrarily. `lang` (a file extension) narrows the choice.
+pub fn inspect_symbol_in_workspace(project_dir: &Path, symbol: &str, max_callers: usize, lang: Option<&str>) -> String {
     if !project_dir.exists() {
         return String::new();
     }
-
-    let adapter = detect_adapter(project_dir);
-    let target_sym = symbol.split("::").last().unwrap_or(symbol).trim();
-
-    let caller_re = match Regex::new(&format!(r"\b{}\s*\(", regex::escape(target_sym))) {
-        Ok(r) => r,
-        Err(_) => return String::new(),
-    };
-
-    let mut definition: Option<(String, crate::adapters::SymbolSpan)> = None;
-    let mut callers: Vec<String> = Vec::new();
-
-    let skip_dirs: Vec<String> = adapter.skip_dirs().iter().map(|s| s.to_string()).collect();
-    let mut walker = WalkBuilder::new(project_dir);
-    walker
-        .hidden(false)
-        .git_ignore(true)
-        .git_global(true)
-        .git_exclude(true)
-        .filter_entry(move |entry| {
-            let name = entry.file_name().to_string_lossy();
-            !skip_dirs.iter().any(|d| d == &name.as_ref())
-        });
-
-    for dent in walker.build().filter_map(|e| e.ok()) {
-        if !dent.file_type().map(|t| t.is_file()).unwrap_or(false) {
-            continue;
-        }
-
-        let path = dent.path();
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
-
-        if ext == "md" || ext == "txt" || ext == "json" || ext == "xml" {
-            continue;
-        }
-
-        let Ok(content) = fs::read_to_string(path) else {
-            continue;
-        };
-
-        let rel_path = path
-            .strip_prefix(project_dir)
-            .map(|p| p.to_string_lossy().replace('\\', "/"))
-            .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
-
-        // 1. Try extracting definition if not found yet
-        if definition.is_none() {
-            if let Some(span) = adapter.extract_definition(&content, &ext, symbol) {
-                definition = Some((rel_path.clone(), span));
-            }
-        }
-
-        // 2. Find call sites
-        if callers.len() < max_callers {
-            for (idx, line) in content.lines().enumerate() {
-                let line_num = idx + 1;
-                if caller_re.is_match(line) {
-                    if let Some((ref def_path, ref def_span)) = definition {
-                        if def_path == &rel_path && line_num >= def_span.start_line && line_num <= def_span.end_line {
-                            continue;
-                        }
-                    }
-                    let snippet = line.trim();
-                    callers.push(format!("{}:{}: {}", rel_path, line_num, snippet));
-                    if callers.len() >= max_callers {
-                        break;
-                    }
-                }
-            }
-        }
-
-        if definition.is_some() && callers.len() >= max_callers {
-            break;
-        }
+    let index = Index::open(project_dir);
+    let mut found: Vec<Located> = index.candidates(symbol).unwrap_or_default();
+    if let Some(l) = lang {
+        found.retain(|c| matches_lang(&c.path, l));
     }
-
-    if definition.is_none() && callers.is_empty() {
+    if found.is_empty() {
         return String::new();
     }
+    found.sort_by(|a, b| (kind_rank(a), &a.path, a.symbol.start_line).cmp(&(kind_rank(b), &b.path, b.symbol.start_line)));
 
-    let mut out = String::new();
-    out.push_str(&format!("[SYMBOL DEFINITION: {}]\n", symbol));
-
-    if let Some((def_file, span)) = definition {
-        out.push_str(&format!(
-            "Location: {}:{}-{} ({} lines)\n{}\n\n",
-            def_file,
-            span.start_line,
-            span.end_line,
-            span.end_line - span.start_line + 1,
-            span.body
-        ));
-    } else {
-        out.push_str(&format!("No explicit definition block found for '{}'\n\n", symbol));
-    }
-
-    if !callers.is_empty() {
-        out.push_str(&format!("[REFERENCES / CALL SITES: {} (Top {})]\n", symbol, callers.len()));
-        for c in &callers {
-            out.push_str(&format!("• {}\n", c));
+    let top = kind_rank(&found[0]);
+    let tied = found.iter().filter(|c| kind_rank(c) == top).count();
+    if tied > 1 {
+        let mut out = format!("'{}' matches {} symbols - pick one:\n", symbol, tied);
+        for c in found.iter().take(MAX_LISTED) {
+            out.push_str(&format!("  {}\n", describe(c)));
         }
-    } else {
-        out.push_str("[REFERENCES / CALL SITES] None found.\n");
+        if found.len() > MAX_LISTED {
+            out.push_str(&format!("  +{} more\n", found.len() - MAX_LISTED));
+        }
+        out.push_str(&format!("repeat as: mysid read <path>:{}   or   mysid read {} --lang <ext>", symbol, symbol));
+        return out;
     }
 
+    let best = &found[0];
+    let mut out = format!("[SYMBOL DEFINITION: {}]\n", symbol);
+    out.push_str(&definition_text(project_dir, best));
+
+    // Callers: of the symbol, or of any of a class's methods.
+    let mut seeds: Vec<SymbolId> = vec![best.symbol.id];
+    if best.symbol.kind == SymbolKind::Class {
+        seeds.extend(index.members(best).unwrap_or_default().iter().map(|m| m.symbol.id));
+    }
+    let callers: Vec<Located> = match index.neighborhood(&seeds, 1) {
+        Ok(hood) => {
+            let mut callers: Vec<Located> = hood
+                .symbols
+                .into_iter()
+                .filter(|s| !seeds.contains(&s.symbol.id) && hood.edges.iter().any(|e| e.from == s.symbol.id && seeds.contains(&e.to)))
+                .collect();
+            callers.sort_by(|a, b| (&a.path, a.symbol.start_line).cmp(&(&b.path, b.symbol.start_line)));
+            callers
+        }
+        Err(_) => Vec::new(),
+    };
+    if callers.is_empty() {
+        out.push_str("\n[CALLERS] none found in the index.\n");
+    } else {
+        out.push_str(&format!("\n[CALLERS: {}]\n", callers.len()));
+        for c in callers.iter().take(max_callers) {
+            out.push_str(&format!("  {}\n", describe(c)));
+        }
+        if callers.len() > max_callers {
+            out.push_str(&format!("  +{} more (mysid graph {})\n", callers.len() - max_callers, symbol));
+        }
+    }
+
+    if found.len() > 1 {
+        out.push_str(&format!("\n[OTHER MATCHES: {}]\n", found.len() - 1));
+        for c in found.iter().skip(1).take(MAX_LISTED) {
+            out.push_str(&format!("  {}\n", describe(c)));
+        }
+    }
     out
+}
+
+/// `Location: path:start-end (N lines)` and the source of the symbol, capped.
+fn definition_text(project_dir: &Path, l: &Located) -> String {
+    let start = l.symbol.start_line as usize;
+    let end = (l.symbol.end_line as usize).max(start);
+    let Ok(content) = fs::read_to_string(project_dir.join(&l.path)) else {
+        return format!("Location: {}:{}-{} (file could not be read)\n", l.path, start, end);
+    };
+    let lines: Vec<&str> = content.lines().collect();
+    let end = end.min(lines.len().max(start));
+    let shown_end = end.min(start + MAX_DEFINITION_LINES - 1);
+
+    let mut out = format!("Location: {}:{}-{} ({} lines)\n", l.path, start, end, end - start + 1);
+    for (i, line) in lines.iter().enumerate().take(shown_end).skip(start - 1) {
+        out.push_str(&format!("{}:{}\n", i + 1, line));
+    }
+    if shown_end < end {
+        out.push_str(&format!("... +{} more lines: mysid read {}#L{}-{}\n", end - shown_end, l.path, shown_end + 1, end));
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn read_returns_code_with_a_window_and_a_footer_and_sends_folders_to_list() {
+        let dir = std::env::temp_dir().join(format!("mysid_read_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        let body: String = (1..=300).map(|i| format!("fun f{}() {{}}\n", i)).collect();
+        fs::write(dir.join("src/Big.kt"), &body).unwrap();
+        fs::write(dir.join("src/Small.kt"), "class S\n").unwrap();
+        let root = dir.to_string_lossy().to_string();
+        let read = |q: &str| execute_read(&json!({ "workspace_root": root, "project_path": root, "path": q }), Some(&root));
+
+        // A bare read of a long source file is the outline plus a hint, not its first lines.
+        let big = read("Big.kt");
+        assert!(big.starts_with("[Big.kt: 300 lines. Too long to print whole"), "{}", &big[..big.len().min(120)]);
+        assert!(big.contains("mysid read Big.kt#L1-60") && big.contains("[L1]") && big.contains("mysid read Big.kt#L1-100"), "{}", big);
+        assert!(!big.contains("1:fun f1() {}"), "no code in the outline reply: {}", big);
+        // Asking for a range (or --full) returns code.
+        assert!(read("Big.kt#L1-100").starts_with("[Big.kt:1-100/300]\n1:fun f1() {}"));
+        let full = execute_read(&json!({ "workspace_root": root, "project_path": root, "path": "Big.kt", "full": true }), Some(&root));
+        assert!(full.starts_with("[Big.kt:1-300/300]") || full.starts_with("[Big.kt:1-"), "{}", &full[..60]);
+        // A text file the parsers do not know keeps the plain window and its footer.
+        fs::write(dir.join("src/notes.log"), (1..=300).map(|i| format!("line {}\n", i)).collect::<String>()).unwrap();
+        let log = read("notes.log");
+        assert!(log.starts_with("[notes.log:1-120/300]") && log.contains("[showing 1-120 of 300. More: mysid read notes.log#L121-240"), "{}", log);
+
+        let slice = read("Big.kt#L10-12");
+        assert_eq!(slice, "[Big.kt:10-12/300]\n10:fun f10() {}\n11:fun f11() {}\n12:fun f12() {}");
+        assert!(!read("Small.kt").contains("showing"), "a short file needs no footer");
+
+        // A slice is up to 200 lines; a name shared by two files lists them instead of "not found".
+        let wide = read("Big.kt#L1-300");
+        assert!(wide.starts_with("[Big.kt:1-200/300]") && wide.contains("200:fun f200() {}") && !wide.contains("201:fun"), "{}", &wide[..60]);
+        fs::create_dir_all(dir.join("a")).unwrap();
+        fs::create_dir_all(dir.join("b")).unwrap();
+        fs::write(dir.join("a/types.ts"), "export type A = 1\n").unwrap();
+        fs::write(dir.join("b/types.ts"), "export type B = 2\n").unwrap();
+        let dup = read("types.ts");
+        assert!(dup.starts_with("ERROR: 'types.ts' is ambiguous - 2 files") && dup.contains("a/types.ts") && dup.contains("b/types.ts"), "{}", dup);
+        // In a batch only that name fails; the others are still read.
+        let batch = execute_read_batch(&json!({ "workspace_root": root, "project_path": root, "files": ["types.ts", "Small.kt"] }), Some(&root));
+        assert!(batch.contains("ambiguous") && batch.contains("[Small.kt:1-1/1]"), "{}", batch);
+
+        let folder = read("src");
+        assert!(folder.starts_with("ERROR: 'src' is a folder, not a file") && folder.contains("mysid list src"), "{}", folder);
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

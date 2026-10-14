@@ -1,4 +1,3 @@
-use ignore::WalkBuilder;
 use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
@@ -107,6 +106,99 @@ fn infer_from_cwd() -> Option<PathBuf> {
     find_project_root(&cwd).or_else(|| if is_valid_project_dir(&cwd) { Some(cwd) } else { None })
 }
 
+/// Where a command's workspace came from; only `Saved` is worth telling the caller about.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Source {
+    Env,
+    /// `set_workspace` run from this folder (or one above it).
+    Pin,
+    /// The project around the current folder.
+    Project,
+    /// The old machine-wide saved workspace: used only when the current folder says nothing.
+    Saved,
+}
+
+fn source_text(s: Source) -> &'static str {
+    match s {
+        Source::Env => "the MYSID_WORKSPACE environment variable",
+        Source::Pin => "a `mysid set` pin for this folder (made in this session)",
+        Source::Project => "the project around the current folder",
+        Source::Saved => "the saved workspace (the current folder is not inside a project)",
+    }
+}
+
+/// The workspace for a command run in `cwd`, from state that belongs to that command alone:
+/// `MYSID_WORKSPACE`, a pin made by `set_workspace` in this folder or above, the project around `cwd`,
+/// and only then the old machine-wide saved workspace. Two agents in two folders never see each other.
+pub fn resolve_for(env_ws: Option<&str>, cwd: &Path, pins: &HashMap<String, String>, saved: Option<&str>) -> Option<(PathBuf, Source)> {
+    resolve_for_session(env_ws, None, cwd, pins, saved)
+}
+
+/// Pins are filed under the session that made them (`claude:18892|d:\work`), so an agent that shares a folder with
+/// another agent, or whose shell is reset to that folder before every command, still gets its own choice. Without a
+/// session (no identifiable parent process) the folder alone is the key, as before.
+pub fn pin_key(session: Option<&str>, dir: &Path) -> String {
+    match session {
+        Some(s) => format!("{}|{}", s, canon_lower(dir)),
+        None => canon_lower(dir),
+    }
+}
+
+pub fn resolve_for_session(
+    env_ws: Option<&str>,
+    session: Option<&str>,
+    cwd: &Path,
+    pins: &HashMap<String, String>,
+    saved: Option<&str>,
+) -> Option<(PathBuf, Source)> {
+    if let Some(e) = env_ws.map(str::trim).filter(|e| !e.is_empty() && Path::new(e).is_dir()) {
+        return Some((PathBuf::from(e), Source::Env));
+    }
+    if !pins.is_empty() {
+        for dir in cwd.ancestors() {
+            if let Some(target) = pins.get(&pin_key(session, dir)).filter(|t| Path::new(t.as_str()).is_dir()) {
+                return Some((PathBuf::from(target), Source::Pin));
+            }
+        }
+    }
+    if let Some(root) = find_project_root(cwd).or_else(|| if is_valid_project_dir(cwd) { Some(cwd.to_path_buf()) } else { None }) {
+        return Some((root, Source::Project));
+    }
+    saved.filter(|s| Path::new(s).is_dir()).map(|s| (PathBuf::from(s), Source::Saved))
+}
+
+/// The project that the absolute paths in a command's arguments belong to (`mysid read D:\apps\web-ui\src\App.tsx#L1-9`),
+/// so an agent running from somewhere else still edits the right project. None when there are none, or they disagree.
+pub fn root_from_paths(params: &Value) -> Option<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    let mut consider = |tok: &str| {
+        let tok = tok.trim().trim_matches('"');
+        let tok = tok.split('#').next().unwrap_or(tok);
+        // `C:\x\A.kt:12` -> drop a trailing line number, but keep the drive colon.
+        let tok = match tok.rfind(':') {
+            Some(i) if i > 1 && tok[i + 1..].chars().all(|c| c.is_ascii_digit() || c == '-') => &tok[..i],
+            _ => tok,
+        };
+        let p = Path::new(tok);
+        if p.is_absolute() && p.exists() {
+            let start = if p.is_dir() { p } else { p.parent().unwrap_or(p) };
+            if let Some(r) = find_project_root(start) {
+                if !roots.iter().any(|x| canon_lower(x) == canon_lower(&r)) {
+                    roots.push(r);
+                }
+            }
+        }
+    };
+    for key in ["path", "file", "files", "query", "symbol", "old_path", "new_path"] {
+        match params.get(key) {
+            Some(Value::String(s)) => s.split_whitespace().for_each(&mut consider),
+            Some(Value::Array(a)) => a.iter().filter_map(|v| v.as_str()).for_each(&mut consider),
+            _ => {}
+        }
+    }
+    if roots.len() == 1 { roots.pop() } else { None }
+}
+
 fn canon_lower(p: &Path) -> String {
     p.canonicalize()
         .map(|c| c.to_string_lossy().trim_start_matches(r"\\?\").to_string())
@@ -200,16 +292,27 @@ pub struct WorkspaceManager {
     pub persisted_current: Option<String>,
     /// One-line heads-up shown to the caller (e.g. cwd is in a different project).
     pub notice: Option<String>,
+    /// `set_workspace` run from a folder pins that folder (and the ones below it) to a workspace. Keyed by
+    /// the folder, so each agent's own working folder is its own scope.
+    pub pins: HashMap<String, String>,
+    /// How `current` was chosen, for `get_workspace`.
+    pub resolved_from: Option<&'static str>,
+    /// One-shot command line (as opposed to the long-lived MCP server).
+    cli: bool,
+    /// The agent or terminal this command runs under (see `session`): pins are filed under it.
+    session: Option<String>,
 }
 
 impl WorkspaceManager {
-    /// Long-lived (MCP) startup: the launching client's directory is the strongest signal.
+    /// Long-lived (MCP) startup: `MYSID_WORKSPACE`, else the launching client's directory, else what was saved.
     pub fn new() -> Self {
         let mut mgr = Self::empty();
         mgr.load_registry();
-
-        if let Some(root) = infer_from_cwd() {
-            mgr.register_and_activate(&root.to_string_lossy(), None);
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let env_ws = std::env::var("MYSID_WORKSPACE").ok();
+        if let Some((root, source)) = resolve_for(env_ws.as_deref(), &cwd, &HashMap::new(), None) {
+            mgr.activate(&root.to_string_lossy(), source != Source::Env);
+            mgr.resolved_from = Some(source_text(source));
         }
         if mgr.current.is_none() {
             mgr.restore_persisted();
@@ -217,47 +320,43 @@ impl WorkspaceManager {
         if mgr.current.is_none() {
             if let Some(persisted) = read_legacy_workspace() {
                 if Path::new(&persisted).is_dir() {
-                    mgr.register_and_activate(&persisted, None);
+                    mgr.activate(&persisted, true);
                 }
             }
         }
         mgr
     }
 
-    /// One-shot CLI startup. An explicitly set workspace is never silently replaced by the
-    /// cwd; with none set, the project root is inferred from the cwd (self-healing).
+    /// One-shot CLI startup. The workspace comes from the folder the command runs in (see `resolve_for`), never from
+    /// state another terminal or agent could have changed; the saved workspace is a last resort and says so.
     pub fn new_cli() -> Self {
         let mut mgr = Self::empty();
+        mgr.cli = true;
         mgr.load_registry();
-
-        if mgr.restore_persisted() {
-            let here = infer_from_cwd();
-            if let (Some(here), Some(active)) = (here, mgr.current.clone()) {
-                let inside = canon_lower(&here).starts_with(&canon_lower(Path::new(&active)))
-                    || canon_lower(&std::env::current_dir().unwrap_or_default())
-                        .starts_with(&canon_lower(Path::new(&active)));
-                if !inside {
-                    mgr.notice = Some(format!(
-                        "[workspace: {} (set earlier); you are in {} - `mysid set_workspace <path>` to switch]",
-                        active,
-                        here.display()
-                    ));
-                }
-            }
-            return mgr;
-        }
-
-        if let Some(root) = infer_from_cwd() {
-            mgr.register_and_activate(&root.to_string_lossy(), None);
-        }
-        if mgr.current.is_none() {
-            if let Some(persisted) = read_legacy_workspace() {
-                if Path::new(&persisted).is_dir() {
-                    mgr.register_and_activate(&persisted, None);
-                }
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let env_ws = std::env::var("MYSID_WORKSPACE").ok();
+        let saved = mgr.persisted_current.clone().or_else(read_legacy_workspace);
+        mgr.session = super::session::current();
+        if let Some((root, source)) = resolve_for_session(env_ws.as_deref(), mgr.session.as_deref(), &cwd, &mgr.pins, saved.as_deref()) {
+            mgr.activate(&root.to_string_lossy(), matches!(source, Source::Project));
+            mgr.resolved_from = Some(source_text(source));
+            if source == Source::Saved {
+                mgr.notice = Some(format!(
+                    "[workspace: {} (saved earlier; this folder is not in a project). Run mysid inside a project folder, or pass --workspace_root]",
+                    root.display()
+                ));
             }
         }
         mgr
+    }
+
+    /// Makes `path` the active workspace without writing anything (the registry is touched only for a new alias).
+    fn activate(&mut self, path: &str, register: bool) {
+        if register {
+            self.register_and_activate(path, None);
+        } else {
+            self.current = Some(path.to_string());
+        }
     }
 
     fn empty() -> Self {
@@ -266,6 +365,10 @@ impl WorkspaceManager {
             registry: HashMap::new(),
             persisted_current: None,
             notice: None,
+            pins: HashMap::new(),
+            resolved_from: None,
+            cli: false,
+            session: None,
         }
     }
 
@@ -280,9 +383,41 @@ impl WorkspaceManager {
         }
     }
 
-    fn persist_current(&mut self, path: &str) {
-        self.persisted_current = Some(path.to_string());
-        self.save_registry();
+    /// Command line only: later commands run from this folder (or below) use `path`. Nothing is shared with other
+    /// folders. Over MCP the choice lives in this server process alone.
+    fn pin_here(&mut self, path: &str) {
+        if !self.cli {
+            return;
+        }
+        if let Ok(cwd) = std::env::current_dir() {
+            // Another agent may have pinned in the meantime: merge what is on disk first, drop pins of sessions that
+            // have ended, then add this one, so nobody's choice is lost or kept past its session.
+            self.merge_pins_from_disk();
+            let table = super::session::table();
+            self.pins.retain(|k, _| k.split_once('|').map_or(true, |(s, _)| super::session::alive(s, &table)));
+            self.pins.insert(pin_key(self.session.as_deref(), &cwd), path.to_string());
+            self.save_registry();
+        }
+    }
+
+    fn merge_pins_from_disk(&mut self) {
+        if let Ok(text) = std::fs::read_to_string(workspaces_registry_file()) {
+            if let Some(pins) = serde_json::from_str::<serde_json::Value>(&text).ok().and_then(|v| v.get("pins").and_then(|p| p.as_object().cloned())) {
+                for (k, v) in pins {
+                    if let Some(p) = v.as_str() {
+                        self.pins.entry(k).or_insert_with(|| p.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    /// A workspace named by alias (`--workspace_root web-ui`) when it is not a folder itself.
+    pub fn resolve_alias(&self, name: &str) -> Option<String> {
+        if Path::new(name).is_dir() {
+            return None;
+        }
+        self.registry.get(&name.trim().to_lowercase()).filter(|p| Path::new(p.as_str()).is_dir()).cloned()
     }
 
     pub fn load_registry(&mut self) {
@@ -290,6 +425,13 @@ impl WorkspaceManager {
         if let Ok(text) = std::fs::read_to_string(&file) {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
                 self.persisted_current = val.get("current").and_then(|v| v.as_str()).map(|s| s.to_string());
+                if let Some(pins) = val.get("pins").and_then(|v| v.as_object()) {
+                    for (k, v) in pins {
+                        if let Some(p) = v.as_str() {
+                            self.pins.insert(k.clone(), p.to_string());
+                        }
+                    }
+                }
                 if let Some(reg_obj) = val.get("registry").and_then(|v| v.as_object()) {
                     for (k, v) in reg_obj {
                         if let Some(p) = v.as_str() {
@@ -306,8 +448,15 @@ impl WorkspaceManager {
         let payload = json!({
             "registry": self.registry,
             "current": self.persisted_current,
+            "pins": self.pins,
         });
-        let _ = std::fs::write(&file, serde_json::to_string_pretty(&payload).unwrap_or_default());
+        // Write-then-rename: another agent reading (or writing) at the same moment never sees half a file.
+        let tmp = file.with_extension(format!("tmp{}", std::process::id()));
+        if std::fs::write(&tmp, serde_json::to_string_pretty(&payload).unwrap_or_default()).is_ok() {
+            if std::fs::rename(&tmp, &file).is_err() {
+                let _ = std::fs::remove_file(&tmp);
+            }
+        }
     }
 
     pub fn register_and_activate(&mut self, path_str: &str, custom_alias: Option<&str>) {
@@ -317,6 +466,8 @@ impl WorkspaceManager {
         } else {
             path_str.trim().to_string()
         };
+
+        let before = self.registry.clone();
 
         // Register by folder name (e.g. "mysid-mcp")
         if let Some(name) = Path::new(&final_path).file_name().and_then(|n| n.to_str()) {
@@ -332,7 +483,10 @@ impl WorkspaceManager {
         }
 
         self.current = Some(final_path);
-        self.save_registry();
+        // Most commands only re-activate a known project: no file write (and no race) unless something is new.
+        if self.registry != before {
+            self.save_registry();
+        }
     }
 
     pub fn switch_workspace(&mut self, query: &str) -> Result<String, String> {
@@ -346,7 +500,7 @@ impl WorkspaceManager {
         if let Some(target) = self.registry.get(&lower).cloned() {
             if Path::new(&target).is_dir() {
                 self.current = Some(target.clone());
-                self.persist_current(&target);
+                self.pin_here(&target);
                 return Ok(target);
             }
         }
@@ -356,7 +510,7 @@ impl WorkspaceManager {
         if path.is_dir() {
             self.register_and_activate(trimmed, None);
             let active = self.current.clone().unwrap_or_else(|| trimmed.to_string());
-            self.persist_current(&active);
+            self.pin_here(&active);
             return Ok(active);
         }
 
@@ -474,43 +628,152 @@ pub fn resolve_file_in_workspace(root: &Path, name: &str, workspace: &str) -> Re
         .and_then(|n| n.to_str())
         .unwrap_or(name);
 
-    // Step 2: cache lookup
-    let cache = read_cache(workspace);
-    if let Some(cached_rel) = cache.map.get(bare_name) {
-        let cached_path = root.join(cached_rel);
-        if cached_path.exists() {
-            cache_put(workspace, bare_name, cached_rel);
-            return Ok(cached_path);
-        }
-        // Stale entry, fall through to WalkDir
-    }
-
-    // Step 3: WalkDir (gitignore-aware)
-    let mut matches: Vec<String> = Vec::new();
-    for result in WalkBuilder::new(root).hidden(false).git_ignore(true).git_global(true).git_exclude(true).build() {
-        let entry = match result { Ok(e) => e, Err(_) => continue };
-        if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
-            if entry.file_name().to_string_lossy() == bare_name {
-                if let Ok(rel) = entry.path().strip_prefix(root) {
-                    matches.push(rel.to_string_lossy().replace('\\', "/"));
-                }
+    // Step 2: cache lookup (bare names only: `ui/Foo.kt` must not be answered with another `Foo.kt`)
+    let is_bare = !name.contains('/') && !name.contains('\\');
+    if is_bare {
+        let cache = read_cache(workspace);
+        if let Some(cached_rel) = cache.map.get(bare_name) {
+            let cached_path = root.join(cached_rel);
+            if cached_path.exists() {
+                cache_put(workspace, bare_name, cached_rel);
+                return Ok(cached_path);
             }
+            // Stale entry, fall through to the file list
         }
     }
 
+    // Step 3: the workspace file list (gitignore-aware, minus build output and vendored dirs)
+    let matches = super::paths::find_by_name(&crate::index::scan::list_files(root), name);
     match matches.len() {
         0 => Err(json!({
             "success": false,
-            "error": format!("'{}' not found in workspace (searched: {})", name, root.display())
+            "error": format!("'{}' not found in workspace (searched: {}). Pass a file name such as Foo.kt, or part of its path.", name, root.display())
         }).to_string()),
         1 => {
-            cache_put(workspace, bare_name, &matches[0]);
+            if is_bare {
+                cache_put(workspace, bare_name, &matches[0]);
+            }
             Ok(root.join(&matches[0]))
         }
         _ => Err(json!({
             "success": false,
-            "error": format!("'{}' is ambiguous - {} files found:\n{}", name, matches.len(),
-                matches.iter().map(|m| format!("  {}", m)).collect::<Vec<_>>().join("\n"))
+            "error": format!("'{}' is ambiguous - {} files; repeat with a folder, e.g. one of:\n{}", name, matches.len(),
+                matches.iter().map(|m| format!("  {}", ambiguous_hint(&matches, m))).collect::<Vec<_>>().join("\n"))
         }).to_string()),
+    }
+}
+
+/// The readable text of a `resolve_file_in_workspace` error (it is a JSON object with an `error` field).
+pub fn resolution_message(err: &str) -> String {
+    serde_json::from_str::<Value>(err).ok().and_then(|v| v.get("error").and_then(|e| e.as_str()).map(String::from)).unwrap_or_else(|| err.to_string())
+}
+
+/// Like `resolve_file_in_workspace`, but a name that cannot be resolved (missing or ambiguous) comes back
+/// as the plain `root.join(name)`, so the caller's own "not found" handling still applies.
+pub fn resolve_or_join(root: &Path, name: &str, workspace: &str) -> PathBuf {
+    resolve_file_in_workspace(root, name, workspace).unwrap_or_else(|_| root.join(name))
+}
+
+/// The shortest folder-qualified name that tells `m` apart from the other candidates, e.g. `ui/Foo.kt`.
+fn ambiguous_hint(all: &[String], m: &str) -> String {
+    let parts: Vec<&str> = m.split('/').collect();
+    for take in 2..=parts.len() {
+        let tail = parts[parts.len() - take..].join("/");
+        if all.iter().filter(|g| g.as_str() == tail || g.ends_with(&format!("/{}", tail))).count() == 1 {
+            return format!("{}   ({})", tail, m);
+        }
+    }
+    m.to_string()
+}
+
+#[cfg(test)]
+mod resolver_tests {
+    use super::*;
+    use std::fs;
+
+    fn two_projects(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let top = std::env::temp_dir().join(format!("mysid_ws_{}_{}", tag, std::process::id()));
+        let _ = fs::remove_dir_all(&top);
+        let (a, b) = (top.join("web-ui"), top.join("ui-host"));
+        fs::create_dir_all(a.join("src")).unwrap();
+        fs::create_dir_all(b.join("native/deep")).unwrap();
+        fs::write(a.join("package.json"), "{}").unwrap();
+        fs::write(b.join("Host.sln"), "").unwrap();
+        fs::create_dir_all(b.join(".git")).unwrap();
+        fs::write(a.join("src/App.tsx"), "x").unwrap();
+        (top, a, b)
+    }
+
+    #[test]
+    fn each_folder_gets_its_own_project_with_no_shared_state() {
+        let (top, a, b) = two_projects("each");
+        let none = HashMap::new();
+        let (ra, sa) = resolve_for(None, &a.join("src"), &none, None).unwrap();
+        let (rb, sb) = resolve_for(None, &b.join("native/deep"), &none, None).unwrap();
+        assert_eq!((canon_lower(&ra), sa), (canon_lower(&a), Source::Project));
+        assert_eq!((canon_lower(&rb), sb), (canon_lower(&b), Source::Project));
+        // a saved workspace elsewhere changes nothing while the folder is inside a project
+        let (r, s) = resolve_for(None, &a.join("src"), &none, Some(&b.to_string_lossy())).unwrap();
+        assert_eq!((canon_lower(&r), s), (canon_lower(&a), Source::Project));
+        let _ = fs::remove_dir_all(&top);
+    }
+
+    #[test]
+    fn env_wins_then_pins_by_folder_and_the_saved_workspace_is_only_a_last_resort() {
+        let (top, a, b) = two_projects("order");
+        let mut pins = HashMap::new();
+        pins.insert(canon_lower(&a), b.to_string_lossy().to_string());
+        // set_workspace was run from web-ui (pinned to ui-host): subfolders follow the pin, other folders do not
+        let (r, s) = resolve_for(None, &a.join("src"), &pins, None).unwrap();
+        assert_eq!((canon_lower(&r), s), (canon_lower(&b), Source::Pin));
+        let (r, s) = resolve_for(None, &b, &pins, None).unwrap();
+        assert_eq!((canon_lower(&r), s), (canon_lower(&b), Source::Project));
+        // the environment overrides everything
+        let (r, s) = resolve_for(Some(&a.to_string_lossy()), &b, &pins, None).unwrap();
+        assert_eq!((canon_lower(&r), s), (canon_lower(&a), Source::Env));
+        // a folder that is no project at all falls back to the saved workspace, and says so
+        let nowhere = top.join("does-not-exist");
+        let (r, s) = resolve_for(None, &nowhere, &HashMap::new(), Some(&a.to_string_lossy())).unwrap();
+        assert_eq!((canon_lower(&r), s), (canon_lower(&a), Source::Saved));
+        assert!(resolve_for(None, &nowhere, &HashMap::new(), None).is_none());
+        let _ = fs::remove_dir_all(&top);
+    }
+
+    #[test]
+    fn pins_belong_to_the_session_that_made_them() {
+        let (top, a, b) = two_projects("sessions");
+        let shared = top.join("shared-folder");
+        fs::create_dir_all(&shared).unwrap();
+        // Two agents share one working folder; each pinned a different project from it.
+        let mut pins = HashMap::new();
+        pins.insert(pin_key(Some("claude:100"), &shared), a.to_string_lossy().to_string());
+        pins.insert(pin_key(Some("claude:200"), &shared), b.to_string_lossy().to_string());
+        let (r, s) = resolve_for_session(None, Some("claude:100"), &shared, &pins, None).unwrap();
+        assert_eq!((canon_lower(&r), s), (canon_lower(&a), Source::Pin));
+        let (r, s) = resolve_for_session(None, Some("claude:200"), &shared, &pins, None).unwrap();
+        assert_eq!((canon_lower(&r), s), (canon_lower(&b), Source::Pin));
+        // A session that pinned nothing does not inherit another's pin (and the folder is no project here).
+        assert!(!matches!(resolve_for_session(None, Some("claude:300"), &shared, &pins, None), Some((_, Source::Pin))));
+        // Without a session the old folder-only key applies.
+        let mut old = HashMap::new();
+        old.insert(pin_key(None, &shared), a.to_string_lossy().to_string());
+        assert_eq!(resolve_for_session(None, None, &shared, &old, None).unwrap().1, Source::Pin);
+        let _ = fs::remove_dir_all(&top);
+    }
+
+    #[test]
+    fn absolute_paths_in_arguments_name_their_project() {
+        let (top, a, b) = two_projects("paths");
+        let file = a.join("src/App.tsx").to_string_lossy().to_string();
+        let r = root_from_paths(&json!({ "query": format!("{}#L1-4", file) })).unwrap();
+        assert_eq!(canon_lower(&r), canon_lower(&a));
+        let r = root_from_paths(&json!({ "files": [format!("{}:12", file)] })).unwrap();
+        assert_eq!(canon_lower(&r), canon_lower(&a));
+        // two different projects in one command: ambiguous, so no guess
+        let other = b.join("Host.sln").to_string_lossy().to_string();
+        assert!(root_from_paths(&json!({ "files": [file.clone(), other] })).is_none());
+        // relative names say nothing
+        assert!(root_from_paths(&json!({ "query": "App.tsx" })).is_none());
+        let _ = fs::remove_dir_all(&top);
     }
 }

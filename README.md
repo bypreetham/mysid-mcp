@@ -1,206 +1,89 @@
 <p align="center">
-  <img src="mysid-mcp.svg" alt="mysid MCP Server" width="200" />
+  <img src="mysid-mcp.svg" alt="mysid" width="160" />
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="Apache 2.0 License" />
-  <img src="https://img.shields.io/badge/Platform-Windows%20x64-0078D6.svg?logo=windows" alt="Windows Platform" />
-  <img src="https://img.shields.io/badge/Protocol-MCP%202024--11--05-blueviolet" alt="MCP Compliant" />
-  <img src="https://img.shields.io/badge/Speed-Native%20Rust%20%3C20ms-orange.svg?logo=rust" alt="Rust Speed" />
+  <img src="https://img.shields.io/badge/Platform-Windows%20x64-0078D6.svg?logo=windows" alt="Windows" />
+  <img src="https://img.shields.io/badge/Protocol-MCP%202024--11--05-blueviolet" alt="MCP" />
+  <img src="https://img.shields.io/badge/Native-Rust-orange.svg?logo=rust" alt="Rust" />
 </p>
 
-# mysid — High-Performance Codebase Intelligence MCP Server
+# mysid
 
-`mysid` is an ultra-fast, standalone code intelligence engine and Model Context Protocol (MCP) server written in Rust. It eliminates bloated token footprints and multi-turn round-trips for AI coding agents and human developers alike.
+A small, fast code-intelligence tool for LLM agents and developers. One Rust binary that works as a **command line** and as an
+**MCP server**. It answers questions about a codebase in a few lines instead of dumping files, edits safely, builds, and keeps an
+audit trail, so an agent spends tokens on the task and not on the tooling.
 
----
+## Install
 
-## Core Capabilities & Architectural Pillars
-
-### 1. Official Model Context Protocol (MCP) Implementation
-- **Standard Protocol Compliance**: Fully adheres to the official MCP specification (`2024-11-05`).
-- **Native Stdio JSON-RPC**: Operates directly over standard I/O with low latency.
-- **Dynamic Tool Schema Discovery (`tools/list`)**: Automatically publishes typed JSON Schemas for all tools, enabling IDEs to display typed parameters and descriptions.
-- **Universal IDE Compatibility**: Instant plug-and-play with **Google Antigravity / Gemini**, **Claude Desktop**, **Cursor**, and **Cline**.
-
-### 2. Architectural Source Graph: Callers & Callees Tracing
-- **AST-Powered Impact Analysis**: Understand how a function or class ripples through the codebase before editing it.
-- **Call-Flow Graph (`mysid graph --mode flow`)**: Maps upstream callers and downstream callees for any entry-point symbol.
-- **Architectural Overview (`mysid graph --mode overview`)**: Summarizes cross-module dependencies, entry points, and high-degree architectural hubs.
-- **Token Efficiency**: Gives AI agents complete structural context without reading thousands of unnecessary file lines.
-
-### 3. Multi-Stack Adapter Architecture
-`mysid` dynamically tailors its AST indexing, error filtering, and build heuristics according to the active technology stack:
-- **Kotlin & Java**: Gradle Kotlin DSL (`build.gradle.kts`), Android manifests, Coroutines, Room, and Hilt.
-- **Android & Android Native C/C++**: NDK, CMake, JNI header bindings, C++ folder patterns, and shared libraries.
-- **Spring Boot**: REST controllers, services, repositories, JPA entities, and Maven/Gradle dependencies.
-- **React & TypeScript / Next.js**: Component trees, JSX/TSX syntax, custom hooks, and npm dependencies.
-- **Rust Crates**: Cargo workspaces, multi-crate module graphs, and type definitions.
-
-### 4. Bare Filename Resolution & 150-Entry LRU Cache
-- **Eliminates Path Hallucination**: AI agents frequently waste tokens guessing complex paths like `app/src/main/java/com/example/folderA/folderB/FileName.kt`.
-- **Just the Filename**: Agents and developers simply pass the bare filename:
-  ```powershell
-  mysid read "FileName.kt#L10-40" "AnotherFile.cpp#L100-140"
-  ```
-- **150-Entry LRU Cache**: Automatically resolves bare filenames against the workspace directory tree in sub-millisecond time and caches them for lightning-fast repeat access.
-- **Zero Single-Turn Peeking**: Bundle multiple arbitrary file slices into a single command to eliminate UI freezes.
-
-### 5. Native Android ADB Toolkit & Build Diagnostics
-- **Wireless ADB Pairing**: Auto-connect to devices over Wi-Fi (`mysid android connect_wifi`) without fiddling with USB cables.
-- **Device & Logcat Stream Management**: List devices, stream filtered logs, and clear buffers with zero context switching.
-- **Crash Log Extractor (`mysid android crashes`)**: Automatically parses logcat to extract clean, deduplicated Java/Kotlin/Native stack traces.
-- **Device Automation**: Directly inject `tap`, `type`, and `keyevent` actions into connected hardware or emulators.
-- **Token-Filtered Gradle Builds**: Filters compilation noise, extracting only the actionable errors to drastically reduce LLM prompt consumption.
-
-### 6. High-Performance File Engine & Surgical Patching
-- **Recursive Directory Creation (`mysid mkdir <path>`)**: Automatically creates all missing parent directories in a single atomic step.
-- **Surgical Patching (`mysid patch <file> <old> <new>`)**: Fast, exact substring search-and-replace without line-number drift.
-- **Atomic Multi-File Patching (`mysid patch_batch`)**: Apply multi-file edits simultaneously with rollback if any patch fails.
-- **Global Workspace Refactoring (`mysid replace <old> <new>`)**: Workspace-wide search-and-replace with `--dry-run` diff preview mode.
-
----
-
-## Directory Structure
-
-```
-mysid-mcp/
-├── rust-mcp/              # Native Rust source code (Cargo workspace)
-│   ├── src/
-│   │   ├── main.rs        # CLI dispatcher & MCP JSON-RPC stdio loop
-│   │   ├── ast.rs         # Tree-sitter AST symbol indexer & caller graph
-│   │   └── tools/         # Core tools (read, search, replace, patch, android, build)
-│   └── Cargo.toml
-├── skills/                # Agent prompt & workflow skill specifications
-│   ├── android-native.md  # Ultra-lean reference for Android & Native C++
-│   └── MCP_COMMANDS.md    # Complete syntax manual
-├── .github/workflows/    # Automated CI/CD release pipeline
-├── mysid-mcp.svg          # Official vector logo
-├── install.ps1            # One-click Windows global installer
-├── package-portable.ps1   # Portable bundle & ZIP packager
-├── Dockerfile             # Multi-stage container build (Glama & Docker MCP)
-├── LICENSE                # Apache 2.0 License
-└── .gitignore             # Excludes compilation artifacts and targets
-```
-
----
-
-## Quick Installation
-
-### Windows (One-Click)
-
-Open PowerShell and run:
 ```powershell
-.\install.ps1
-```
-This automatically:
-1. Compiles the release binary (or uses a precompiled `mysid.exe`).
-2. Installs it to `%LOCALAPPDATA%\mysid\bin\mysid.exe`.
-3. Adds it to your Windows User `PATH` (available in all new terminal sessions).
-4. Auto-configures Antigravity/Gemini `mcp_config.json`.
-
----
-
-## MCP Server Configuration
-
-### Google Antigravity / Gemini (`~/.gemini/config/mcp_config.json`)
-```json
-{
-  "mcpServers": {
-    "mysid": {
-      "command": "mysid",
-      "args": []
-    }
-  }
-}
+.\install.ps1          # builds if needed, installs to %LOCALAPPDATA%\mysid\bin, adds it to PATH, registers the MCP server
+mysid help
 ```
 
-### Claude Desktop (`%APPDATA%\Claude\claude_desktop_config.json`)
-```json
-{
-  "mcpServers": {
-    "mysid": {
-      "command": "mysid",
-      "args": []
-    }
-  }
-}
+MCP clients (Claude Desktop, Antigravity/Gemini, Cursor, Cline): `{ "mcpServers": { "mysid": { "command": "mysid", "args": [] } } }`
+
+## The usual flow
+
+Run it from inside the project folder. mysid finds the project from there, so several agents can work on several projects at
+once. `mysid set <path>` is optional.
+
+```
+mysid list src/ui                 what is in a folder
+mysid overview Player.kt          the outline: types and signatures, no code
+mysid read Player.kt              the code (first 120 lines);  Player.kt#L121-240 for more;  or a symbol name
+mysid search "retries" --types kt where is it
+mysid graph StreamResolver        who calls it, what it calls  (no argument: where the code lives)
+mysid apply  /  mysid patch ...   edit: many changes at once, or one exact replacement
+mysid write src/New.kt --file x   new file (no shell quoting: stdin or --file)
+mysid check  /  mysid build       verify: errors only
+mysid checkpoint -> edits -> mysid diff -> mysid commit "msg"       undo: mysid restore --yes
 ```
 
----
+File **names**, not paths (`Player.kt`). Output is capped and prints short names. Failures start with `NOT PATCHED`, `NOT APPLIED`,
+`NOT WRITTEN` and exit with status 1. Nothing is ever pushed.
 
-## CLI Usage Reference
+## For models
 
-### 1. Set Workspace
-```powershell
-mysid set_workspace "C:\path\to\your\project"
-mysid get_workspace
-```
+- `mysid help` is the flow above. `mysid help --claude` shows it in Claude Code's own tool names.
+- `mysid skill base | android | react` print short workflow guides; `mysid skill install` writes them as Claude Code skills.
+- Android commands (build stages, release, devices, Wi-Fi, device logs) are taught by `mysid skill android`.
 
-### 2. AST Lookup & Batch Code Slices
-```powershell
-# AST symbol definition + top callers
-mysid read SymbolName
+## What is inside
 
-# Single-turn multi-slice reading (bare filenames are automatically resolved)
-mysid read "FileName1.cpp#L100-150" "FileName2.kt#L20-60"
-```
+| Part | What it does | Doc |
+|---|---|---|
+| Code index (SQLite, in `.mysid/`) | symbols, call graph, signatures; refreshed incrementally | [Indexer](README/Indexer.md) |
+| `graph`, `list`, `overview`, `read` | orientation without file dumps | [graph](README/graph.md), [looking at code](README/looking-at-code.md) |
+| `search` | parallel regex search with a lazily filled text index | [Indexer](README/Indexer.md) |
+| Editing | `patch`, `apply`, `write`, `append` with CRLF-safe matching | [editing](README/editing.md), [file names](README/file-names.md) |
+| Git helpers | `commit`, `history`, `checkpoint`, `diff`, `restore` | [commit and history](README/commit-history.md) |
+| Build | detached worker with live stages and an errors-only report (Gradle, Cargo, npm) | [Android](README/android-dev.md), [exec and check](README/exec-and-check.md) |
+| Android | release (versionCode bump, bundle, verification), devices, Wi-Fi, keyword and raw device logs | [Android](README/android-dev.md) |
+| Web release | `mysid release` in a React project: build, `netlify deploy --prod`, live `.mysid/release.log` | [web release](README/web-release.md) |
+| Dev server, deps | `mysid dev` (background server + URL + log), `mysid deps` (missing npm packages) | [dev and deps](README/dev-and-deps.md) |
+| Project doctor | `mysid doctor compare <old> <new>`: files, size, identical / changed / moved / one-sided, and whether the old folder can be deleted | [project doctor](README/project-doctor.md) |
+| Shell-free chores | `--head/--tail/--grep` on any command, `mysid test`, `mysid status`, `mysid copy` | [shell-free](README/shell-free.md) |
+| Projects | `mysid new react <name>` | [new project](README/new-project.md) |
+| Workspaces | one project per folder, per command, no shared state | [workspaces](README/workspaces.md) |
+| Skills | workflow guides for models | [skills](README/skills.md) |
+| Where data lives | `.mysid/` in the project, `%LOCALAPPDATA%\mysid` per user | [agent data](README/agent-data.md) |
 
-### 3. Fast Code Search
-```powershell
-# Multi-threaded regex/string search respecting .gitignore
-mysid search "symbol_name" --types kt,cpp
-```
-
-### 4. Global Search & Replace
-```powershell
-# Refactor across the entire workspace
-mysid replace "oldMethodName" "newMethodName" --types kt,cpp
-
-# Preview changes before applying
-mysid replace "oldMethodName" "newMethodName" --dry-run
-```
-
-### 5. Surgical File Patching
-```powershell
-mysid patch app/build.gradle.kts "versionCode = 44" "versionCode = 45"
-```
-
-### 6. Android Build & ADB Tools
-```powershell
-mysid build                # assembleDebug with token-filtered errors
-mysid build clean          # clean assembleDebug
-mysid release              # compile release bundle + verify R8 mapping
-mysid install              # deploy APK to connected device
-
-mysid devices              # list ADB devices
-mysid android logcat --lines 50
-mysid android crashes
-```
-
----
-
-## Building from Source
-
-Requirements: [Rust](https://rustup.rs/) (stable toolchain).
+## Build from source
 
 ```powershell
 cd rust-mcp
-cargo build --release
+cargo build --release      # rust-mcp/target/release/mysid.exe
+cargo test
 ```
-The compiled binary will be at `rust-mcp/target/release/mysid.exe`.
 
----
+Layout: `rust-mcp/src/` (`tools/` the commands, `index/` the code index, `textindex/` the search index, `parsers/` per language,
+`adapters/` per stack), `rust-mcp/skills/` the guides built into the binary, `README/` the documentation.
 
-## Why Mysid?
+## Why "mysid"?
 
-A **mysid** is a small shrimp-like crustacean, commonly called a mysid shrimp. The name comes from the taxonomic group **Mysida**.
+A mysid is a small, adaptable crustacean that moves through complex water and finds what it needs. The tool does the same in a codebase:
+small, quick, and good at finding the right context.
 
-The name reflects several ideas behind this project:
-
-1. **Adaptable** — Mysids inhabit a variety of environments, including caves, deep water, marine environments, and freshwater. Similarly, **Mysid MCP** is designed to operate across different development environments and interact with files, source code, build systems, and Android devices.
-
-2. **Small but complex** — Despite their small size, mysids have sophisticated sensory and swimming systems. They move through complex environments, explore their surroundings, and locate resources. This reflects the role of Mysid MCP in navigating complex codebases, searching for relevant code, tracing project structure, and providing the right context to an AI agent.
-
-3. **Explore and interact** — Mysids use their sensory systems to detect and respond to their surroundings while moving through the aquatic environment and obtaining available food. Similarly, Mysid MCP gives an AI agent tools to explore a development environment, locate relevant resources, and act on them.
-
+Apache 2.0, see [LICENSE](LICENSE).

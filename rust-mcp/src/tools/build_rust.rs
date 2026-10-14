@@ -3,8 +3,24 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use super::build_worker::Status;
+
 const MAX_WARNING_LINES: usize = 10;
 const MAX_ERROR_LINES: usize = 25;
+
+/// Updates live progress from one line of `cargo build` output.
+pub fn track(p: &mut Status, line: &str) {
+    let l = line.trim_start();
+    if let Some(rest) = l.strip_prefix("Compiling ") {
+        p.tasks_done += 1;
+        p.tasks_executed += 1;
+        p.current = format!("compiling {}", rest.split_whitespace().next().unwrap_or(""));
+    } else if l.starts_with("error") && !l.starts_with("error: could not compile") && !l.starts_with("error: aborting") {
+        p.errors += 1;
+    } else if l.starts_with("warning") && !l.starts_with("warning: `") && !l.starts_with("warning: build failed") {
+        p.warnings += 1;
+    }
+}
 
 /// Locates cargo: $CARGO, ~/.cargo/bin, any rustup toolchain, then plain `cargo` on PATH.
 pub fn find_cargo() -> String {

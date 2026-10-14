@@ -56,17 +56,44 @@ pub struct Symbol {
     pub start_line: u32,
     #[allow(dead_code)] // persisted for `read` (exact body extents)
     pub end_line: u32,
+    /// False for a declaration (a C++ header prototype, an interface or `external` method): no block of its own.
+    pub has_body: bool,
+}
+
+/// A symbol as the resolver sees it when it looks for what a call refers to.
+#[derive(Clone, Debug)]
+pub struct Cand {
+    pub id: SymbolId,
+    pub file: FileId,
+    pub owner: Option<String>,
+    pub has_body: bool,
+}
+
+impl From<&Symbol> for Cand {
+    fn from(s: &Symbol) -> Self {
+        Cand { id: s.id, file: s.file_id, owner: s.owner.clone(), has_body: s.has_body }
+    }
+}
+
+/// A symbol together with the path of its file: what lookups return.
+#[derive(Clone, Debug)]
+pub struct Located {
+    pub symbol: Symbol,
+    pub path: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EdgeKind {
     Calls,
+    /// A base class method to the methods that override it (virtual dispatch).
+    Dispatch,
 }
 
 impl EdgeKind {
     pub fn as_str(self) -> &'static str {
         match self {
             EdgeKind::Calls => "CALLS",
+            EdgeKind::Dispatch => "DISPATCH",
         }
     }
 }
@@ -83,6 +110,9 @@ pub struct Edge {
 pub struct CallSite {
     pub symbol_id: SymbolId,
     pub callee: String,
-    /// Written as `x.callee(...)`.
+    /// Written as `x.callee(...)` or `p->callee(...)`.
     pub dotted: bool,
+    /// The declared type of the receiver (`negotiator.setup()` -> `UsbFormatNegotiator`), or `@jvm` for a call from
+    /// native code back into the JVM by name (`GetMethodID`); empty when unknown.
+    pub recv_type: String,
 }

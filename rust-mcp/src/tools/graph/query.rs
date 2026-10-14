@@ -132,7 +132,7 @@ pub fn neighbors<'a>(graph: &'a CodeGraph, id: &str, dir: Dir) -> Vec<&'a Node> 
     let mut out: Vec<&Node> = edges
         .into_iter()
         .flatten()
-        .filter(|(_, rel)| rel == "CALLS")
+        .filter(|(_, rel)| rel == "CALLS" || rel == "DISPATCH")
         .filter_map(|(other, _)| graph.nodes.get(other))
         .collect();
     sort_nodes(&mut out);

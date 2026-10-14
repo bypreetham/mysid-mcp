@@ -3,6 +3,12 @@ pub mod device;
 pub mod input;
 pub mod logs;
 pub mod runner;
+pub mod shot;
+pub mod touch;
+
+// Parts of the touch tooling (D-pad focus, scripted scenarios) that build on its helpers.
+mod focus;
+mod scenario;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -34,6 +40,11 @@ pub struct AndroidParams {
 }
 
 pub fn execute_android(params: &Value, default_root: Option<&str>) -> String {
+    // Touch automation (tap, swipe, type, ... always answer with a screenshot) reads its own tolerant parameters.
+    if let Some(action) = params.get("action").and_then(|a| a.as_str()).filter(|a| touch::handles(a)) {
+        let root = params.get("workspace_root").and_then(|v| v.as_str()).or(default_root);
+        return touch::execute(action, params, root.map(Path::new));
+    }
     let p: AndroidParams = match serde_json::from_value(params.clone()) {
         Ok(parsed) => parsed,
         Err(e) => {

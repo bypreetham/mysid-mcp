@@ -18,7 +18,7 @@ pub fn execute_lint(params: &Value, default_root: Option<&str>) -> String {
     let root = Path::new(&workspace_root);
 
     let target = target_path_opt.as_deref().unwrap_or(".");
-    let target_path = root.join(target);
+    let target_path = if target == "." { root.join(target) } else { super::workspace::resolve_or_join(root, target, &workspace_root) };
 
     let is_python = target.ends_with(".py") || (!target_path.is_file() && root.join("requirements.txt").exists());
     let is_rust = target.ends_with(".rs") || (!target_path.is_file() && root.join("Cargo.toml").exists());

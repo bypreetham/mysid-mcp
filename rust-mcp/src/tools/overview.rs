@@ -5,6 +5,7 @@ use std::fs;
 use std::path::Path;
 
 use super::workspace::{resolve_file_in_workspace, resolve_root};
+use crate::index::{Index, Outline};
 pub use crate::parsers::{find_parser, is_supported_extension, MethodSignature, TypeInfo};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -67,19 +68,35 @@ pub fn execute_overview(params: &Value, default_root: Option<&str>) -> String {
 
     let mut overviews: Vec<FileOverview> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
+    let depth = params.get("depth").and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))).map(|d| d as usize);
+    let mut tree_blocks: Vec<String> = Vec::new();
+    // Signatures come from the code index: a named file is refreshed on its own (no tree walk), a
+    // directory refreshes the index once. Files the index does not hold are parsed directly.
+    let mut lazy_index: Option<Index> = None;
 
     for target in &targets {
         let clean_target = target.split('#').next().unwrap_or(target).trim();
         let resolved = match resolve_file_in_workspace(root, clean_target, &workspace_root) {
             Ok(p) => p,
             Err(e) => {
-                errors.push(format!("Could not resolve '{}': {}", clean_target, e));
+                errors.push(format!("Could not resolve '{}': {}", clean_target, super::workspace::resolution_message(&e)));
                 continue;
             }
         };
 
+        if resolved.is_dir() && depth.is_some() {
+            // `--depth n`: the folder map (names and code counts), no outlines.
+            tree_blocks.push(super::orient::tree(root, &resolved, depth.unwrap_or(1), false));
+            continue;
+        }
         if resolved.is_dir() {
-            // Walk directory and analyze supported source files
+            let rel_dir = resolved.strip_prefix(root).map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
+            let indexed = Index::open(root).outlines(&rel_dir).unwrap_or_default();
+            if !indexed.is_empty() {
+                overviews.extend(indexed.into_iter().map(from_outline));
+                continue;
+            }
+            // Nothing indexed there (e.g. only Markdown): walk directory and analyze supported source files
             for entry in WalkBuilder::new(&resolved)
                 .hidden(false)
                 .git_ignore(true)
@@ -105,6 +122,16 @@ pub fn execute_overview(params: &Value, default_root: Option<&str>) -> String {
                 .map(|p| p.to_string_lossy().replace('\\', "/"))
                 .unwrap_or_else(|_| clean_target.to_string());
 
+            let index = lazy_index.get_or_insert_with(|| Index::open_lazy(root));
+            let hit = index
+                .refresh_paths(root, &[resolved.clone()])
+                .ok()
+                .and_then(|_| index.outlines(&rel_str).ok())
+                .and_then(|v| v.into_iter().find(|o| o.path == rel_str));
+            if let Some(outline) = hit {
+                overviews.push(from_outline(outline));
+                continue;
+            }
             match analyze_file(&resolved, &rel_str) {
                 Ok(overview) => overviews.push(overview),
                 Err(e) => errors.push(format!("Error reading '{}': {}", rel_str, e)),
@@ -112,6 +139,23 @@ pub fn execute_overview(params: &Value, default_root: Option<&str>) -> String {
         }
     }
 
+    if !tree_blocks.is_empty() && overviews.is_empty() {
+        let mut out = tree_blocks.join("\n\n");
+        for e in &errors {
+            out.push_str(&format!("\n{}", e));
+        }
+        return out;
+    }
+    // `--match word`: only the files whose path, or a type / function in them, contains the word.
+    if let Some(w) = params.get("match").and_then(|v| v.as_str()).map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()) {
+        let before = overviews.len();
+        overviews.retain(|o| {
+            o.path.to_lowercase().contains(&w) || o.types.iter().any(|t| t.name.to_lowercase().contains(&w)) || o.methods.iter().any(|m| m.name.to_lowercase().contains(&w))
+        });
+        if overviews.is_empty() && errors.is_empty() {
+            return format!("No file, class or function matching '{}' among the {} file(s) here. Try mysid search {}.", w, before, w);
+        }
+    }
     if format_json {
         json!({
             "success": errors.is_empty(),
@@ -123,6 +167,10 @@ pub fn execute_overview(params: &Value, default_root: Option<&str>) -> String {
     } else {
         render_human_readable(&overviews, &errors)
     }
+}
+
+fn from_outline(o: Outline) -> FileOverview {
+    FileOverview { path: o.path, language: o.language, total_lines: o.lines, types: o.types, methods: o.methods }
 }
 
 fn is_supported_file(path: &Path) -> bool {

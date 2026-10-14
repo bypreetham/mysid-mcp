@@ -2,10 +2,13 @@ use serde_json::{json, Value};
 use std::path::Path;
 use std::process::Command;
 
-use super::{build_log, build_rust};
-use super::workspace::resolve_existing_root;
+use std::time::Duration;
+
+use super::build_worker::{self, Job, Kind};
+use super::build_rust;
 
 const MAX_OUTPUT_BYTES: usize = 32_768;
+use super::workspace::resolve_existing_root;
 
 pub fn execute_build(params: &Value, default_root: Option<&str>) -> String {
     let workspace_root = match resolve_existing_root(params, "workspace_root", default_root) {
@@ -23,6 +26,8 @@ pub fn execute_build(params: &Value, default_root: Option<&str>) -> String {
                 .and_then(|a| a.get(0))
                 .and_then(|v| v.as_str())
         })
+        // MCP clients send `action` (clean / status / stop / release); plain "build" is the default.
+        .or_else(|| params.get("action").and_then(|v| v.as_str()).filter(|a| !a.eq_ignore_ascii_case("build")))
         .map(|s| s.to_string());
 
     if let Some(ref extra) = extra_args {
@@ -32,6 +37,22 @@ pub fn execute_build(params: &Value, default_root: Option<&str>) -> String {
         if !is_cargo && (trimmed.eq_ignore_ascii_case("release") || trimmed.eq_ignore_ascii_case("aab")) {
             return execute_release(params, default_root);
         }
+    }
+
+    let wait = Duration::from_secs(
+        params.get("wait").and_then(|v| v.as_u64()).unwrap_or(build_worker::default_wait_secs()),
+    );
+    match extra_args.as_deref().map(|e| e.trim().to_ascii_lowercase()).as_deref() {
+        Some("status") => {
+            return match build_worker::wait(&workspace_root, wait, false) {
+                Some(st) => build_response(&st, false),
+                None => json!({ "success": true, "output": "No build has been started in this workspace." }).to_string(),
+            };
+        }
+        Some("stop") | Some("cancel") => {
+            return json!({ "success": true, "output": build_worker::stop(&workspace_root) }).to_string();
+        }
+        _ => {}
     }
 
     let root = Path::new(&workspace_root);
@@ -75,7 +96,18 @@ pub fn execute_build(params: &Value, default_root: Option<&str>) -> String {
     // 0. Detect custom project script (tools/run.bat or run.bat)
     let tools_run_bat = root.join("tools").join("run.bat");
     let root_run_bat = root.join("run.bat");
-    let custom_run_bat = if tools_run_bat.exists() {
+    let has_gradlew = root.join("gradlew.bat").exists() || root.join("gradlew").exists();
+    // Caches made at another path (the folder was moved) or a missing SDK fail a Gradle build minutes in: say so now.
+    if has_gradlew {
+        if let Some(answer) = super::stale::guard(root, params) {
+            return answer;
+        }
+    }
+    // A Gradle project is built by mysid directly: project scripts usually redirect Gradle's output
+    // to a temp file, which hides all progress. (JAVA_HOME is still taken from the script.)
+    let custom_run_bat = if has_gradlew {
+        None
+    } else if tools_run_bat.exists() {
         Some(tools_run_bat)
     } else if root_run_bat.exists() {
         Some(root_run_bat)
@@ -211,101 +243,77 @@ pub fn execute_build(params: &Value, default_root: Option<&str>) -> String {
         .to_string();
     };
 
-    // Full output streams live to <workspace>/.mysid/build.log; the caller gets a short summary.
-    let log_path = match build_log::ensure_dir(Path::new(&workspace_root)) {
-        Ok(dir) => dir.join(build_log::BUILD_LOG),
-        Err(_) => std::env::temp_dir().join("mysid-build.log"),
+    let kind = match stack_name.as_str() {
+        "Rust (Cargo)" => Kind::Rust,
+        "Android (Gradle)" => Kind::Gradle,
+        _ => Kind::Other,
     };
-    let log_display = format!("{}/{}", build_log::MYSID_DIR, build_log::BUILD_LOG);
-    eprintln!("build started... (live log: {})", log_display);
-
-    let mut cmd = Command::new(&program);
-    cmd.args(&args);
-    cmd.current_dir(root);
-
-    let started = std::time::Instant::now();
-    let title = format!("mysid build [{}] {} {}", stack_name, program, args.join(" "));
-    let output = match build_log::run_logged(cmd, &log_path, &title) {
-        Ok(out) => out,
-        Err(e) => {
-            return json!({
-                "success": false,
-                "stack": stack_name,
-                "error": format!("Failed to spawn build command '{}': {}", program, e)
-            })
-            .to_string();
-        }
+    let job = Job {
+        stack: stack_name,
+        kind,
+        program,
+        args,
+        cwd: root.to_string_lossy().to_string(),
+        env: java_home_env(root),
+        bump: false,
     };
 
-    let exit_code = output.status.code().unwrap_or(-1);
-
-    if stack_name == "Rust (Cargo)" {
-        let show_warnings = params.get("warnings").and_then(|v| v.as_bool()).unwrap_or(true);
-        let summary = build_rust::summarize(
-            &output.stdout,
-            &output.stderr,
-            output.status.success(),
-            started.elapsed(),
-            show_warnings,
-        );
-        return json!({
-            "success": output.status.success(),
-            "stack": stack_name,
-            "exit_code": exit_code,
-            "output": format!("{}
-log: {}", summary, log_display)
-        })
-        .to_string();
-    }
-
-    let mut stdout_str = output.stdout.clone();
-    let mut stderr_str = output.stderr.clone();
-
-    if stdout_str.len() > MAX_OUTPUT_BYTES {
-        let start = stdout_str.len() - MAX_OUTPUT_BYTES;
-        stdout_str = format!("[... truncated earlier output ...]\n{}", &stdout_str[start..]);
-    }
-    if stderr_str.len() > MAX_OUTPUT_BYTES {
-        let start = stderr_str.len() - MAX_OUTPUT_BYTES;
-        stderr_str = format!("[... truncated earlier output ...]\n{}", &stderr_str[start..]);
-    }
-
-    let success = exit_code == 0;
-    let (final_stdout, final_stderr) = if success {
-        ("success".to_string(), "".to_string())
-    } else {
-        let combined = format!("{}\n{}", stdout_str, stderr_str);
-        let error_lines: Vec<&str> = combined
-            .lines()
-            .filter(|line| {
-                let l = line.to_lowercase();
-                l.contains("error")
-                    || l.contains("failed")
-                    || l.contains("exception")
-                    || l.starts_with("(!)")
-                    || l.contains("ts")
-            })
-            .collect();
-        let filtered = if !error_lines.is_empty() {
-            error_lines.join("\n")
-        } else {
-            combined
-        };
-        ("".to_string(), filtered)
+    // The build runs in a detached worker (full output streams to .mysid/build.log); wait a short
+    // budget for the result and otherwise report progress instead of blocking the caller.
+    let attached = match build_worker::start(&workspace_root, &job) {
+        Ok(a) => a,
+        Err(e) => return json!({ "success": false, "error": e }).to_string(),
     };
+    if !attached {
+        eprintln!("BUILD STARTED - {} - in {} - log: .mysid/build.log", job.stack, job.cwd);
+    }
+    match build_worker::wait(&workspace_root, wait, !attached) {
+        Some(st) => build_response(&st, attached),
+        None => json!({ "success": false, "error": "build status unavailable" }).to_string(),
+    }
+}
 
+fn build_response(st: &build_worker::Status, attached: bool) -> String {
+    let mut text = build_worker::render(st);
+    if attached && st.state == "running" {
+        text = format!("(a build is already running)
+{}", text);
+    }
     json!({
-        "success": success,
-        "stack": stack_name,
-        "exit_code": exit_code,
-        "stdout": final_stdout,
-        "stderr": final_stderr,
-        "log": log_display
+        "success": st.state != "failed",
+        "state": st.state,
+        "exit_code": st.exit_code,
+        "output": text
     })
     .to_string()
 }
 
-/// Generate Android release bundle (.aab) locally with R8 mapping verification.
+/// The JDK a project script pins (`set "JAVA_HOME=..."` in run.bat), used when the environment
+/// has no usable JAVA_HOME. Gradle is run directly, so the script's setting must be carried over.
+fn java_home_env(root: &Path) -> Vec<(String, String)> {
+    if std::env::var("JAVA_HOME").map_or(false, |h| Path::new(&h).exists()) {
+        return Vec::new();
+    }
+    const PREFIX: &str = "set \"java_home=";
+    for script in [root.join("tools").join("run.bat"), root.join("run.bat")] {
+        let Ok(text) = std::fs::read_to_string(&script) else { continue };
+        for line in text.lines() {
+            let l = line.trim();
+            if l.len() > PREFIX.len() && l[..PREFIX.len()].eq_ignore_ascii_case(PREFIX) {
+                let value = l[PREFIX.len()..].trim_end_matches('"').trim();
+                if !value.is_empty() && Path::new(value).exists() {
+                    return vec![("JAVA_HOME".to_string(), value.to_string())];
+                }
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// `mysid release`: raises versionCode by one and builds the release AAB (`bundleRelease`) on the
+/// detached worker, so it reports progress like `mysid build`. The bump happens inside the worker,
+/// right before Gradle starts, and is put back if the build fails or is cancelled. A release that
+/// is already running is attached to, not bumped again.
 pub fn execute_release(params: &Value, default_root: Option<&str>) -> String {
     let workspace_root = match resolve_existing_root(params, "workspace_root", default_root) {
         Ok(p) => p,
@@ -313,10 +321,19 @@ pub fn execute_release(params: &Value, default_root: Option<&str>) -> String {
     };
 
     let root = Path::new(&workspace_root);
-    if !root.exists() {
+    let android = root.join("gradlew.bat").exists() || root.join("gradlew").exists();
+    if android {
+        if let Some(answer) = super::stale::guard(root, params) {
+            return answer;
+        }
+    }
+    if !android && super::release_web::is_web_project(root) {
+        return web_release(&workspace_root, root, params);
+    }
+    if !android {
         return json!({
             "success": false,
-            "error": format!("Workspace root does not exist: {}", root.display())
+            "error": format!("No gradlew or package.json found in {}: `mysid release` builds Android projects and deploys web projects", root.display())
         })
         .to_string();
     }
@@ -334,86 +351,56 @@ pub fn execute_release(params: &Value, default_root: Option<&str>) -> String {
         "gradlew".to_string()
     };
 
-    use std::io::Write;
-    println!("release AAB build started...");
-    let _ = std::io::stdout().flush();
-
-    let mut cmd = Command::new(&gradlew);
-    cmd.args(["bundleRelease", "-x", "test", "--console=plain"]);
-    cmd.current_dir(root);
-
-    let output = match cmd.output() {
-        Ok(out) => out,
-        Err(e) => {
-            return json!({
-                "success": false,
-                "error": format!("Failed to spawn '{}': {}", gradlew, e)
-            })
-            .to_string();
-        }
+    let job = Job {
+        stack: "Android release (Gradle)".to_string(),
+        kind: Kind::GradleRelease,
+        program: gradlew,
+        args: vec!["bundleRelease".to_string(), "-x".to_string(), "test".to_string(), "--console=plain".to_string()],
+        cwd: root.to_string_lossy().to_string(),
+        env: java_home_env(root),
+        bump: true,
     };
 
-    let exit_code = output.status.code().unwrap_or(-1);
-    let stdout_str = String::from_utf8_lossy(&output.stdout);
-    let stderr_str = String::from_utf8_lossy(&output.stderr);
-    let combined = format!("{}\n{}", stdout_str, stderr_str);
-
-    if exit_code != 0 {
-        let error_lines: Vec<&str> = combined
-            .lines()
-            .filter(|line| {
-                let l = line.trim();
-                l.starts_with("e: ")
-                    || l.contains("error:")
-                    || l.contains("FAILED")
-                    || l.contains("Exception")
-                    || l.contains("Caused by:")
-                    || l.contains("ld.lld:")
-            })
-            .collect();
-
-        let filtered_error = if !error_lines.is_empty() {
-            error_lines.join("\n")
-        } else {
-            combined.trim().to_string()
-        };
-
-        return json!({
-            "success": false,
-            "exit_code": exit_code,
-            "error": filtered_error
-        })
-        .to_string();
+    let wait = Duration::from_secs(
+        params.get("wait").and_then(|v| v.as_u64()).unwrap_or(build_worker::default_wait_secs()),
+    );
+    let attached = match build_worker::start(&workspace_root, &job) {
+        Ok(a) => a,
+        Err(e) => return json!({ "success": false, "error": e }).to_string(),
+    };
+    if !attached {
+        eprintln!("RELEASE STARTED - {} - in {} - versionCode +1 - log: .mysid/build.log", job.stack, job.cwd);
     }
+    match build_worker::wait(&workspace_root, wait, !attached) {
+        Some(st) => build_response(&st, attached),
+        None => json!({ "success": false, "error": "build status unavailable" }).to_string(),
+    }
+}
 
-    let aab_rel = root.join("app").join("build").join("outputs").join("bundle").join("release").join("app-release.aab");
-    let mapping_rel = root.join("app").join("build").join("outputs").join("mapping").join("release").join("mapping.txt");
-
-    if aab_rel.exists() {
-        let size_bytes = std::fs::metadata(&aab_rel).map(|m| m.len()).unwrap_or(0);
-        let size_mb = (size_bytes as f64) / (1024.0 * 1024.0);
-        let r8_present = mapping_rel.exists();
-
-        json!({
-            "success": true,
-            "action": "release",
-            "aab_path": aab_rel.to_string_lossy().to_string(),
-            "size_mb": (size_mb * 100.0).round() / 100.0,
-            "r8_mapping_present": r8_present,
-            "output": format!(
-                "SUCCESS: Release AAB generated at {} ({:.2} MB){}",
-                aab_rel.display(),
-                size_mb,
-                if r8_present { " | R8 mapping present" } else { "" }
-            )
-        })
-        .to_string()
-    } else {
-        json!({
-            "success": false,
-            "error": format!("AAB file not found at expected path: {}", aab_rel.display())
-        })
-        .to_string()
+/// `mysid release` in a web project: build and `netlify deploy --prod` in the detached worker.
+fn web_release(workspace_root: &str, root: &Path, params: &Value) -> String {
+    let job = Job {
+        stack: super::release_web::STACK.to_string(),
+        kind: Kind::WebRelease,
+        program: "netlify".to_string(),
+        args: Vec::new(),
+        cwd: root.to_string_lossy().to_string(),
+        env: Vec::new(),
+        bump: false,
+    };
+    let wait = Duration::from_secs(
+        params.get("wait").and_then(|v| v.as_u64()).unwrap_or(build_worker::default_wait_secs()),
+    );
+    let attached = match build_worker::start(workspace_root, &job) {
+        Ok(a) => a,
+        Err(e) => return json!({ "success": false, "error": e }).to_string(),
+    };
+    if !attached {
+        eprintln!("RELEASE STARTED - {} - in {} - log: .mysid/release.log", job.stack, job.cwd);
+    }
+    match build_worker::wait(workspace_root, wait, !attached) {
+        Some(st) => build_response(&st, attached),
+        None => json!({ "success": false, "error": "release status unavailable" }).to_string(),
     }
 }
 
@@ -433,6 +420,10 @@ pub fn execute_install(params: &Value, default_root: Option<&str>) -> String {
             obj.insert("action".to_string(), json!("install"));
         }
         return super::android::execute_android(&p, default_root);
+    }
+
+    if root.join("Cargo.toml").exists() && !root.join("package.json").exists() {
+        return super::install_rust::execute(root, params);
     }
 
     if !root.join("package.json").exists() {

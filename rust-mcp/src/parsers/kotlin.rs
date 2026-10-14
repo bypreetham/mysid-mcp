@@ -1,4 +1,4 @@
-use super::{gather_multiline_signature, LanguageParser, MethodSignature, TypeInfo};
+use super::{TypeScopes, gather_multiline_signature, LanguageParser, MethodSignature, TypeInfo};
 use regex::Regex;
 
 pub struct KotlinParser;
@@ -21,13 +21,13 @@ impl LanguageParser for KotlinParser {
         )
         .unwrap();
         let fun_re = Regex::new(
-            r"^\s*(?:(?:public|private|protected|internal|override|suspend|inline|open|abstract|tailrec|operator|infix)\s+)*fun\s+(?:<[^>]+>\s+)?(?:[A-Za-z0-9_<>,.? ]+\.)?([A-Za-z0-9_]+)\s*\(",
+            r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:(?:public|private|protected|internal|override|suspend|inline|open|abstract|tailrec|operator|infix|external|final|actual|expect)\s+)*fun\s+(?:<[^>]+>\s+)?(?:[A-Za-z0-9_<>,.? ]+\.)?([A-Za-z0-9_]+)\s*\(",
         )
         .unwrap();
         let constructor_re =
             Regex::new(r"^\s*(?:(?:public|private|protected|internal)\s+)*constructor\s*\(").unwrap();
 
-        let mut current_type: Option<String> = None;
+        let mut scopes = TypeScopes::new();
 
         for (idx, &line) in lines.iter().enumerate() {
             let trimmed = line.trim();
@@ -44,9 +44,11 @@ impl LanguageParser for KotlinParser {
                         kind: kind.to_string(),
                         line: idx + 1,
                     });
-                    current_type = Some(name.to_string());
+                    scopes.enter(name);
                 }
             }
+
+            let current_type = scopes.current();
 
             if let Some(caps) = fun_re.captures(trimmed) {
                 let name = caps.get(1).map_or("", |m| m.as_str()).to_string();
@@ -85,6 +87,7 @@ impl LanguageParser for KotlinParser {
                     parent: current_type.clone(),
                 });
             }
+            scopes.end_line(line, lines.get(idx + 1).copied());
         }
 
         (types, methods)

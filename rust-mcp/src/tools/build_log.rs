@@ -27,9 +27,15 @@ pub struct LoggedRun {
 }
 
 /// Runs `cmd`, appending every output line to `log_path` as it arrives (so the file can be
-/// tailed live), while also capturing stdout/stderr for the caller's summary.
+/// tailed live), while also capturing stdout/stderr for the caller's summary. `on_line` sees each
+/// line as it arrives (progress tracking).
 /// The log is truncated at the start of each run.
-pub fn run_logged(mut cmd: Command, log_path: &Path, title: &str) -> io::Result<LoggedRun> {
+pub fn run_logged(
+    mut cmd: Command,
+    log_path: &Path,
+    title: &str,
+    on_line: Arc<dyn Fn(&str) + Send + Sync>,
+) -> io::Result<LoggedRun> {
     let mut file = File::create(log_path)?;
     writeln!(file, "# {}", title)?;
     file.flush()?;
@@ -39,8 +45,8 @@ pub fn run_logged(mut cmd: Command, log_path: &Path, title: &str) -> io::Result<
     let out = child.stdout.take().expect("piped stdout");
     let err = child.stderr.take().expect("piped stderr");
 
-    let t_out = pump(out, Arc::clone(&log));
-    let t_err = pump(err, Arc::clone(&log));
+    let t_out = pump(out, Arc::clone(&log), Arc::clone(&on_line));
+    let t_err = pump(err, Arc::clone(&log), on_line);
 
     let status = child.wait()?;
     let stdout = t_out.join().unwrap_or_default();
@@ -53,7 +59,11 @@ pub fn run_logged(mut cmd: Command, log_path: &Path, title: &str) -> io::Result<
     Ok(LoggedRun { status, stdout, stderr })
 }
 
-fn pump<R: io::Read + Send + 'static>(reader: R, log: Arc<Mutex<File>>) -> thread::JoinHandle<String> {
+fn pump<R: io::Read + Send + 'static>(
+    reader: R,
+    log: Arc<Mutex<File>>,
+    on_line: Arc<dyn Fn(&str) + Send + Sync>,
+) -> thread::JoinHandle<String> {
     thread::spawn(move || {
         let mut captured = String::new();
         let mut reader = BufReader::new(reader);
@@ -68,6 +78,7 @@ fn pump<R: io::Read + Send + 'static>(reader: R, log: Arc<Mutex<File>>) -> threa
                         let _ = f.write_all(line.as_bytes());
                         let _ = f.flush();
                     }
+                    on_line(line.trim_end());
                     captured.push_str(&line);
                 }
             }

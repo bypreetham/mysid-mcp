@@ -34,6 +34,9 @@ const ANDROID_SKIP_DIRS: &[&str] = &[
     "captures",
 ];
 
+/// Third-party NDK headers vendored under the module's native sources.
+const ANDROID_SKIP_PATHS: &[&str] = &["src/main/cpp/include", "src/main/jni/include"];
+
 const ANDROID_EXTS: &[&str] = &[
     "cpp", "cc", "c", "h", "hpp", "kt", "java", "gradle", "cmake", "txt", "xml",
 ];
@@ -49,6 +52,10 @@ impl StackAdapter for AndroidAdapter {
 
     fn skip_dirs(&self) -> &[&'static str] {
         ANDROID_SKIP_DIRS
+    }
+
+    fn skip_paths(&self) -> &[&'static str] {
+        ANDROID_SKIP_PATHS
     }
 
     fn file_extensions(&self) -> &[&'static str] {

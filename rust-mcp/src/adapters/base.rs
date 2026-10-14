@@ -42,7 +42,7 @@ const BASE_SKIP_DIRS: &[&str] = &[
 ];
 
 const BASE_EXTS: &[&str] = &[
-    "rs", "py", "js", "ts", "jsx", "tsx", "java", "kt", "c", "cpp", "cc", "h", "hpp", "go",
+    "rs", "py", "js", "ts", "jsx", "tsx", "java", "kt", "c", "cpp", "cc", "h", "hpp", "go", "dart",
 ];
 
 impl StackAdapter for BaseAdapter {

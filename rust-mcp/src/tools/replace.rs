@@ -76,7 +76,7 @@ pub fn execute_replace(params: &Value, default_root: Option<&str>) -> String {
         let full_path = if Path::new(target_file).is_absolute() {
             target_file.into()
         } else {
-            root.join(target_file)
+            super::workspace::resolve_or_join(root, target_file, &workspace_root)
         };
 
         if !full_path.is_file() {
@@ -205,5 +205,5 @@ pub fn execute_replace(params: &Value, default_root: Option<&str>) -> String {
         ));
     }
 
-    out
+    out.trim_end().to_string()
 }

@@ -1,4 +1,4 @@
-use super::{gather_multiline_signature, LanguageParser, MethodSignature, TypeInfo};
+use super::{TypeScopes, gather_multiline_signature, LanguageParser, MethodSignature, TypeInfo};
 use regex::Regex;
 
 pub struct JavaParser;
@@ -27,7 +27,7 @@ impl LanguageParser for JavaParser {
         let constructor_re =
             Regex::new(r"^\s*(?:(?:public|private|protected)\s+)([A-Za-z0-9_]+)\s*\(").unwrap();
 
-        let mut current_type: Option<String> = None;
+        let mut scopes = TypeScopes::new();
 
         for (idx, &line) in lines.iter().enumerate() {
             let trimmed = line.trim();
@@ -44,9 +44,11 @@ impl LanguageParser for JavaParser {
                         kind: kind.to_string(),
                         line: idx + 1,
                     });
-                    current_type = Some(name.to_string());
+                    scopes.enter(name);
                 }
             }
+
+            let current_type = scopes.current();
 
             if let Some(caps) = method_re.captures(trimmed) {
                 let ret = caps.get(1).map_or("", |m| m.as_str()).to_string();
@@ -79,6 +81,7 @@ impl LanguageParser for JavaParser {
                     });
                 }
             }
+            scopes.end_line(line, lines.get(idx + 1).copied());
         }
 
         (types, methods)

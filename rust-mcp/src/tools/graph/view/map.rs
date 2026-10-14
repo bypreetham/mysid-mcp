@@ -6,6 +6,13 @@ use crate::tools::graph::query::label;
 
 const MAX_LINES: usize = 40;
 const NAMES_PER_FILE: usize = 5;
+/// The map opens up folders until about this many rows are shown (never more than MAX_ROWS).
+const TARGET_ROWS: usize = 12;
+const MAX_ROWS: usize = 22;
+/// An opened folder shows this many of its biggest sub-folders, the rest as one row.
+const KIDS_SHOWN: usize = 8;
+/// Folders with fewer files than this are not opened further.
+const MIN_EXPAND_FILES: usize = 12;
 
 fn norm(path: &str) -> String {
     path.trim().replace('\\', "/").trim_start_matches("./").trim_matches('/').to_string()
@@ -15,13 +22,6 @@ fn file_nodes(graph: &CodeGraph) -> Vec<&Node> {
     let mut files: Vec<&Node> = graph.nodes.values().filter(|n| n.node_type == "file").collect();
     files.sort_by(|a, b| a.file.cmp(&b.file));
     files
-}
-
-/// True when `path` names a file or a directory that contains scanned files.
-pub fn matches_path(graph: &CodeGraph, path: &str) -> bool {
-    let p = norm(path);
-    let dir = format!("{}/", p);
-    !p.is_empty() && file_nodes(graph).iter().any(|f| f.file == p || f.file.starts_with(&dir))
 }
 
 /// Orientation map. No path: directory rollup. A directory: its children. A file: its symbols.
@@ -50,44 +50,111 @@ pub fn render(graph: &CodeGraph, root_name: &str, path: Option<&str>) -> String 
 
     let dir_prefix = if p.is_empty() { String::new() } else { format!("{}/", p) };
     let scoped: Vec<&Node> = files.iter().copied().filter(|f| f.file.starts_with(&dir_prefix)).collect();
-    let total_syms: usize = scoped.iter().map(|f| by_file.get(f.file.as_str()).map_or(0, |v| v.len())).sum();
 
-    // Skip single-child directory chains (src/ -> src/Pages/) so the first line shown is useful.
-    let mut base = dir_prefix.clone();
-    loop {
-        let firsts: Vec<&str> = scoped
-            .iter()
-            .filter_map(|f| f.file[base.len()..].split_once('/').map(|(d, _)| d))
-            .collect();
-        let all_nested = firsts.len() == scoped.len() && !firsts.is_empty();
-        if all_nested && firsts.iter().all(|d| *d == firsts[0]) {
-            base = format!("{}{}/", base, firsts[0]);
-        } else {
-            break;
-        }
-    }
-
-    let location = if base.is_empty() { root_name.to_string() } else { base.trim_end_matches('/').to_string() };
-    out.push(format!("{} - {} files, {} symbols", location, scoped.len(), total_syms));
-
-    // Group by the first path component below `base`.
-    let mut dirs: BTreeMap<String, (usize, usize)> = BTreeMap::new(); // name -> (files, symbols)
-    let mut direct: Vec<&Node> = Vec::new();
-    for f in &scoped {
-        let rel = &f.file[base.len()..];
-        let syms = by_file.get(f.file.as_str()).map_or(0, |v| v.len());
-        match rel.split_once('/') {
-            Some((d, _)) => {
-                let e = dirs.entry(d.to_string()).or_insert((0, 0));
-                e.0 += 1;
-                e.1 += syms;
+    // Rows start as the folders directly below the chosen directory; the biggest ones are then opened up,
+    // so the first call already shows where the code lives (app/src/main/java/com/x/ui/), not just `app/`.
+    let counts = |prefix: &str| -> (BTreeMap<String, (usize, usize)>, Vec<&Node>) {
+        let mut dirs: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+        let mut direct: Vec<&Node> = Vec::new();
+        for f in scoped.iter().filter(|f| f.file.starts_with(prefix)) {
+            let rel = &f.file[prefix.len()..];
+            let syms = by_file.get(f.file.as_str()).map_or(0, |v| v.len());
+            match rel.split_once('/') {
+                Some((d, _)) => {
+                    let e = dirs.entry(d.to_string()).or_insert((0, 0));
+                    e.0 += 1;
+                    e.1 += syms;
+                }
+                None => direct.push(f),
             }
-            None => direct.push(f),
         }
-    }
+        (dirs, direct)
+    };
+    // Follow a chain of folders that each hold exactly one folder and no files (src/ -> src/Pages/).
+    let collapse = |start: &str| -> String {
+        let mut prefix = start.to_string();
+        loop {
+            let (dirs, direct) = counts(&prefix);
+            if dirs.len() == 1 && direct.is_empty() {
+                prefix = format!("{}{}/", prefix, dirs.keys().next().unwrap());
+            } else {
+                return prefix;
+            }
+        }
+    };
 
-    for (name, (nf, ns)) in &dirs {
-        if !out.push(format!("  {}{}/  {} files, {} symbols", base, name, nf, ns)) {
+    let base = collapse(&dir_prefix);
+    let location = if base.is_empty() { root_name.to_string() } else { base.trim_end_matches('/').to_string() };
+    out.push(format!("{} - {} files, {} symbols", location, scoped.iter().filter(|f| f.file.starts_with(&base)).count(), {
+        scoped.iter().filter(|f| f.file.starts_with(&base)).map(|f| by_file.get(f.file.as_str()).map_or(0, |v| v.len())).sum::<usize>()
+    }));
+
+    #[derive(PartialEq)]
+    enum Kind {
+        Dir,
+        /// Files lying directly in a folder that was opened.
+        Direct,
+        /// The smaller folders of an opened folder, folded into one row (how many).
+        Others(usize),
+    }
+    struct Row {
+        prefix: String,
+        files: usize,
+        syms: usize,
+        kind: Kind,
+        done: bool,
+    }
+    let (top_dirs, direct) = counts(&base);
+    let mut rows: Vec<Row> = top_dirs
+        .iter()
+        .map(|(name, (nf, ns))| Row { prefix: collapse(&format!("{}{}/", base, name)), files: *nf, syms: *ns, kind: Kind::Dir, done: false })
+        .collect();
+    while rows.len() < TARGET_ROWS {
+        // The biggest folder that is worth opening and can be.
+        let Some(idx) = rows.iter().enumerate().filter(|(_, r)| !r.done && r.files >= MIN_EXPAND_FILES).max_by_key(|(_, r)| r.files).map(|(i, _)| i) else { break };
+        let (kids, here) = counts(&rows[idx].prefix);
+        if kids.is_empty() {
+            // Only files in here: nothing to open, keep the plain row.
+            rows[idx].done = true;
+            continue;
+        }
+        let parent = rows[idx].prefix.clone();
+        let mut next: Vec<Row> = kids
+            .iter()
+            .map(|(name, (nf, ns))| Row { prefix: collapse(&format!("{}{}/", parent, name)), files: *nf, syms: *ns, kind: Kind::Dir, done: false })
+            .collect();
+        // Only the biggest folders get a row of their own; the rest are folded into one.
+        if next.len() > KIDS_SHOWN {
+            next.sort_by(|a, b| b.files.cmp(&a.files).then(a.prefix.cmp(&b.prefix)));
+            let rest = next.split_off(KIDS_SHOWN);
+            next.push(Row {
+                prefix: parent.clone(),
+                files: rest.iter().map(|r| r.files).sum(),
+                syms: rest.iter().map(|r| r.syms).sum(),
+                kind: Kind::Others(rest.len()),
+                done: true,
+            });
+        }
+        // A handful of files without symbols (a build script) is not worth a row.
+        let here_syms: usize = here.iter().map(|f| by_file.get(f.file.as_str()).map_or(0, |v| v.len())).sum();
+        if !here.is_empty() && (here_syms > 0 || here.len() > 2) {
+            next.push(Row { prefix: parent.clone(), files: here.len(), syms: here_syms, kind: Kind::Direct, done: true });
+        }
+        // A single child is simply followed (it goes one level deeper); only an empty or too-wide result stops here.
+        if next.is_empty() || rows.len() - 1 + next.len() > MAX_ROWS {
+            rows[idx].done = true;
+            continue;
+        }
+        rows.splice(idx..=idx, next);
+    }
+    rows.sort_by(|a, b| a.prefix.cmp(&b.prefix).then((a.kind == Kind::Dir).cmp(&(b.kind == Kind::Dir))));
+    for r in &rows {
+        let line = match r.kind {
+            Kind::Direct => format!("  {}  (+{} files directly here, {} symbols)", r.prefix, r.files, r.syms),
+            Kind::Others(n) => format!("  {}  (+{} more folders: {} files, {} symbols)", r.prefix, n, r.files, r.syms),
+            Kind::Dir => format!("  {}  {} files, {} symbols", r.prefix, r.files, r.syms),
+        };
+        if !out.push(line) {
             break;
         }
     }
