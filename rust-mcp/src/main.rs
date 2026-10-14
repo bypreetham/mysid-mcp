@@ -670,10 +670,15 @@ fn parse_cli_args(args: &[String]) -> (String, Value) {
         }
     } else if verb == "edit" {
         // mysid edit <file>#L10-20 ["new text" | --file f | stdin] [--insert-after | --insert-before | --delete] [--expect "text"]
-        // A value-less flag written before the file would swallow it as its value.
+        // A value-less flag swallows the word after it: the file spec when the flag came first (`--delete f#L3`), the new
+        // text when it came after the file (`f#L3 --insert-after "text"`). Give it back where it belongs.
         for flag in ["delete", "insert-after", "insert_after", "after", "insert-before", "insert_before", "before"] {
             if let Some(Value::String(v)) = params.get(flag).cloned() {
-                positionals.insert(0, v);
+                if v.contains("#L") || v.contains("#l") || positionals.is_empty() {
+                    positionals.insert(0, v);
+                } else {
+                    positionals.push(v);
+                }
                 params.insert(flag.to_string(), json!(true));
             }
         }
