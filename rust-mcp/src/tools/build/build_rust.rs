@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use super::build::worker::Status;
+use super::worker::Status;
 
 const MAX_WARNING_LINES: usize = 10;
 const MAX_ERROR_LINES: usize = 25;

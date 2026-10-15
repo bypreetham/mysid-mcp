@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use crate::tools::build::gradle;
-use crate::tools::build::exec::run_with_timeout;
+use super::gradle;
+use super::exec::run_with_timeout;
 
 const JARSIGNER_TIMEOUT: Duration = Duration::from_secs(60);
 

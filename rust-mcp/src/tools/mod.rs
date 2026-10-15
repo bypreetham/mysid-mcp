@@ -1,21 +1,14 @@
 pub mod android;
-pub mod apply;
 pub mod build;
-pub mod build_rust;
 pub mod deps;
 pub mod doctor;
 pub mod dev;
 pub mod scanner;
 pub mod session;
 pub mod test_run;
-pub mod check;
 
 pub mod file;
 pub mod graph;
-pub mod paths;
-pub mod patch;
-pub mod release;
-pub mod replace;
 pub mod scaffold;
 pub mod skill;
 pub mod stale;

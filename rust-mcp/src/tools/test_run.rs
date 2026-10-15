@@ -9,7 +9,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use super::build::log;
-use super::build_rust;
+use super::build::build_rust;
 use super::build::exec::run_with_timeout;
 use super::workspace::resolve_existing_root;
 

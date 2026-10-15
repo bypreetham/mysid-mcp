@@ -16,8 +16,8 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::{gradle, log};
-use crate::tools::build_rust;
-use crate::tools::release::{bump as release_bump, check as release_check, web as release_web};
+use super::build_rust;
+use super::{bump as release_bump, preflight as release_check, web as release_web};
 
 const JOB_FILE: &str = "build.job.json";
 const STATUS_FILE: &str = "build.status.json";

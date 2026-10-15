@@ -2,17 +2,23 @@
 //! `execute_file` is the dispatcher behind `mysid file <action>`.
 
 mod append;
+mod apply;
 mod cp;
 mod delete;
 mod edit;
 mod list;
 mod mkdir;
+mod patch;
 mod new;
 mod rename;
+mod replace;
 mod util;
 mod write;
 
 pub use append::execute_append;
+pub use apply::execute_apply;
+pub use patch::{execute_patch, execute_patch_batch};
+pub use replace::execute_replace;
 pub use cp::execute_copy;
 pub use delete::execute_delete;
 pub use edit::execute_edit;

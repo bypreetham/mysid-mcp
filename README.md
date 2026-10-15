@@ -17,17 +17,21 @@ audit trail, so an agent spends tokens on the task and not on the tooling.
 
 ## Install
 
+Windows (PowerShell), prebuilt binary, no Rust needed:
+
 ```powershell
-.\install.ps1          # builds if needed, installs to %LOCALAPPDATA%\mysid\bin, adds it to PATH, registers the MCP server (Claude Code, Claude Desktop, Antigravity/Gemini)
-mysid help
+irm https://raw.githubusercontent.com/bypreetham/mysid-mcp/main/install.ps1 | iex
 ```
 
-macOS and Linux (prebuilt binary, no Rust needed):
+macOS and Linux, prebuilt binary, no Rust needed:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/bypreetham/mysid-mcp/main/install.sh | sh
-mysid help
 ```
+
+Then open a new terminal and run `mysid help`. Both put `mysid` on your PATH and register the MCP server for Claude Code, Claude Desktop and
+Antigravity/Gemini when they are installed. [INSTALL.md](INSTALL.md) has the options, how to check it, and a fix for each failure.
+From a clone, `.\install.ps1` builds from source when Rust is installed.
 
 MCP clients (Claude Desktop, Antigravity/Gemini, Cursor, Cline): `{ "mcpServers": { "mysid": { "command": "mysid", "args": [] } } }`
 
@@ -41,18 +45,17 @@ Install mysid on this machine and set it up. The latest build is published at
 https://github.com/bypreetham/mysid-mcp/releases/tag/latest
 
 1. If `mysid help` already runs, skip to step 3.
-2. Install, by system:
+2. Install, by system (the details and every failure fix are in https://github.com/bypreetham/mysid-mcp/blob/main/INSTALL.md):
    - Windows (PowerShell):
-       Invoke-WebRequest https://raw.githubusercontent.com/bypreetham/mysid-mcp/main/install.ps1 -OutFile "$env:TEMP\mysid-install.ps1"
-       powershell -ExecutionPolicy Bypass -File "$env:TEMP\mysid-install.ps1" -Download
+       irm https://raw.githubusercontent.com/bypreetham/mysid-mcp/main/install.ps1 | iex
      It copies mysid.exe to %LOCALAPPDATA%\mysid\bin and adds that folder to my user PATH.
    - macOS or Linux:
        curl -fsSL https://raw.githubusercontent.com/bypreetham/mysid-mcp/main/install.sh | sh
      It picks the build for this system (Linux or macOS, x86_64 or arm64), checks its checksum, copies it to ~/.local/bin
      and adds that folder to my shell profile when it is not on PATH.
    Both scripts check that the download runs before replacing anything, and register the MCP server for Claude Code, Claude
-   Desktop and Antigravity/Gemini when they are installed. If the `claude` command exists but registration was skipped, run:
-     claude mcp add --scope user mysid -- mysid
+   Desktop and Antigravity/Gemini when they are installed. Without the `claude` command they edit ~/.claude.json (if it exists,
+   after a backup). If Claude Code still does not list mysid, run:  claude mcp add --scope user mysid -- mysid
 3. Check it in a NEW terminal (this one has the old PATH): `mysid help` must print "mysid: code intelligence for LLM agents"
    and a numbered command list. If the command is not found, tell me which folder it was installed to and fix PATH.
 4. Other MCP clients: add { "mcpServers": { "mysid": { "command": "mysid", "args": [] } } } to their config.
@@ -122,8 +125,11 @@ cargo build --release      # rust-mcp/target/release/mysid.exe
 cargo test
 ```
 
-Layout: `rust-mcp/src/` (`tools/` the commands, `index/` the code index, `textindex/` the search index, `parsers/` per language,
-`adapters/` per stack), `rust-mcp/skills/` the guides built into the binary, `README/` the documentation.
+Layout: `rust-mcp/src/` (`main.rs` starts the command line or the MCP server; `cli/` argument parsing and output, `dispatch.rs` command name
+to handler, `help/` the help text, `mcp/` the MCP server and its tool list; `tools/` the commands, grouped in `file/`, `build/` (build, release,
+install, exec), `scanner/` (read, search, overview, symbols, tree), `scaffold/`, `android/`, `vcs/`, `graph/`, `doctor/`; `index/` the code
+index, `textindex/` the search index, `parsers/` per language, `adapters/` per stack), `rust-mcp/skills/` the guides built into the binary,
+`README/` the documentation.
 
 ## Why "mysid"?
 

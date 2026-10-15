@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 /// Folders of generated or downloaded files: left out unless `--everything` (their size is still reported).
-const GENERATED: &[&str] = &[".git", "node_modules", ".gradle", "build", ".cxx", "target", ".mysid", ".idea", ".dart_tool", "__pycache__", ".next", ".vs", "pods", "intermediates"];
+pub(super) const GENERATED: &[&str] = &[".git", "node_modules", ".gradle", "build", ".cxx", "target", ".mysid", ".idea", ".dart_tool", "__pycache__", ".next", ".vs", "pods", "intermediates"];
 /// Text files up to this size are read whole for the line-ending check and the line counts.
 const TEXT_LIMIT: u64 = 8 * 1024 * 1024;
 /// A modification time must differ by more than this to call one side newer (copies shift times a little).
@@ -158,7 +158,7 @@ fn compare_one(rel: &str, pa: &Path, pb: &Path, a: &FileInfo, b: &FileInfo) -> O
     mk(Kind::Changed, None)
 }
 
-fn human(bytes: u64) -> String {
+pub(super) fn human(bytes: u64) -> String {
     const U: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut v = bytes as f64;
     let mut i = 0;
@@ -169,7 +169,7 @@ fn human(bytes: u64) -> String {
     if i == 0 { format!("{} B", bytes) } else { format!("{:.1} {}", v, U[i]) }
 }
 
-fn thousands(n: usize) -> String {
+pub(super) fn thousands(n: usize) -> String {
     let s = n.to_string();
     let mut out = String::new();
     for (i, c) in s.chars().enumerate() {

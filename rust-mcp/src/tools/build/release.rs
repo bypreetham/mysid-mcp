@@ -1,20 +1,12 @@
-//! Releases and installs: `mysid release` (Android bundle or web deploy), `mysid install`.
-//! bump: versionCode; check: preflight and verification; web: Netlify; install_rust: install the built Rust binary.
-
-pub mod bump;
-pub mod check;
-pub mod install;
-pub mod install_rust;
-pub mod web;
-
-pub use install::execute_install;
+//! `mysid release`: raises the versionCode and builds the release bundle (Android), or deploys a web project.
 
 use serde_json::{json, Value};
 use std::path::Path;
 use std::time::Duration;
 
-use crate::tools::build::worker::{self, Job, Kind};
-use crate::tools::build::{build_response, java_home_env};
+use super::web;
+use super::worker::{self, Job, Kind};
+use super::{build_response, java_home_env};
 use crate::tools::workspace::resolve_existing_root;
 
 /// `mysid release`: raises versionCode by one and builds the release AAB (`bundleRelease`) on the
@@ -30,7 +22,7 @@ pub fn execute_release(params: &Value, default_root: Option<&str>) -> String {
     let root = Path::new(&workspace_root);
     let android = root.join("gradlew.bat").exists() || root.join("gradlew").exists();
     if android {
-        if let Some(answer) = super::stale::guard(root, params) {
+        if let Some(answer) = crate::tools::stale::guard(root, params) {
             return answer;
         }
     }

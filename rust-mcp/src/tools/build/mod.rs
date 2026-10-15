@@ -1,9 +1,20 @@
+pub mod bump;
+pub mod build_rust;
+pub mod check;
 pub mod debug;
 pub mod exec;
 pub mod gradle;
+pub mod install;
+pub mod install_rust;
 pub mod lint;
 pub mod log;
+pub mod preflight;
+pub mod release;
+pub mod web;
 pub mod worker;
+
+pub use install::execute_install;
+pub use release::execute_release;
 
 use serde_json::{json, Value};
 use std::path::Path;
@@ -12,7 +23,6 @@ use std::process::Command;
 use std::time::Duration;
 
 use worker::{Job, Kind};
-use super::build_rust;
 
 const MAX_OUTPUT_BYTES: usize = 32_768;
 use super::workspace::resolve_existing_root;
@@ -42,7 +52,7 @@ pub fn execute_build(params: &Value, default_root: Option<&str>) -> String {
         // `release` means an Android AAB, except in a Cargo workspace where it means `--release`.
         let is_cargo = Path::new(&workspace_root).join("Cargo.toml").exists();
         if !is_cargo && (trimmed.eq_ignore_ascii_case("release") || trimmed.eq_ignore_ascii_case("aab")) {
-            return super::release::execute_release(params, default_root);
+            return release::execute_release(params, default_root);
         }
     }
 

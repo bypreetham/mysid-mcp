@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
-use super::workspace::resolve_root;
+use crate::tools::workspace::resolve_root;
 
 const BINARY_EXTENSIONS: &[&str] = &[
     "so", "dll", "exe", "dylib", "a", "lib", "o", "obj",
@@ -76,7 +76,7 @@ pub fn execute_replace(params: &Value, default_root: Option<&str>) -> String {
         let full_path = if Path::new(target_file).is_absolute() {
             target_file.into()
         } else {
-            super::workspace::resolve_or_join(root, target_file, &workspace_root)
+            crate::tools::workspace::resolve_or_join(root, target_file, &workspace_root)
         };
 
         if !full_path.is_file() {

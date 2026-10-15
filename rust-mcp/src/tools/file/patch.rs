@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
 
-use super::workspace::{resolve_file_in_workspace, resolve_root};
+use crate::tools::workspace::{resolve_file_in_workspace, resolve_root};
 
 /// Changes / lines per side a dry-run diff prints before summarizing the rest.
 const DIFF_CHANGES_SHOWN: usize = 3;

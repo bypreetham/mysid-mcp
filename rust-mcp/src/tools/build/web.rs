@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 
-use crate::tools::build::worker::{self, Status};
+use super::worker::{self, Status};
 
 pub const RELEASE_LOG: &str = "release.log";
 pub const STACK: &str = "React release (Netlify)";

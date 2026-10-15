@@ -1,0 +1,21 @@
+# mysid
+
+> mysid is a single Rust program that is both a command line and an MCP (Model Context Protocol) server. It gives AI coding
+> agents compact answers about a codebase (outlines, targeted reads, search, call graphs), safe edits, builds and releases,
+> and Android device automation, instead of whole files.
+
+## Install and set up
+
+- [INSTALL.md](https://raw.githubusercontent.com/bypreetham/mysid-mcp/main/INSTALL.md): exact install commands for Windows, macOS and Linux, how to register the MCP server in Claude Code, Claude Desktop and others, how to verify, and fixes for each failure. Start here.
+- Windows (PowerShell): `irm https://raw.githubusercontent.com/bypreetham/mysid-mcp/main/install.ps1 | iex`
+- macOS, Linux: `curl -fsSL https://raw.githubusercontent.com/bypreetham/mysid-mcp/main/install.sh | sh`
+- Verify in a new terminal: `mysid help` prints "mysid: code intelligence for LLM agents" and the numbered command list.
+
+## Use
+
+- [README.md](https://raw.githubusercontent.com/bypreetham/mysid-mcp/main/README.md): what it is, the usual flow (`mysid set .`, `mysid list`, `mysid overview`, `mysid read`, `mysid search`, `mysid graph`, `mysid patch`, `mysid build`).
+- `mysid help` is the short command list; `mysid help remaining` lists every other command with its full syntax; `mysid help <command>` gives one command in detail.
+
+## Releases
+
+- [Latest build](https://github.com/bypreetham/mysid-mcp/releases/tag/latest): `mysid.exe`, `mysid-linux-x64`, `mysid-linux-arm64`, `mysid-macos-x64`, `mysid-macos-arm64`, and `SHA256SUMS`.

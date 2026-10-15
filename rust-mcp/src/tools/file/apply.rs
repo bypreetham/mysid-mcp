@@ -22,7 +22,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::patch::{apply as splice, diff_preview, line_of, list_lines, plan};
-use super::workspace::{resolve_file_in_workspace, resolve_root};
+use crate::tools::workspace::{resolve_file_in_workspace, resolve_root};
 
 const SHAPE: &str = "Expected SEARCH/REPLACE blocks:\n\
 <file name on its own line>\n\

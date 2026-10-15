@@ -8,8 +8,8 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use super::build::exec::run_with_timeout;
-use super::workspace::resolve_existing_root;
+use super::exec::run_with_timeout;
+use crate::tools::workspace::resolve_existing_root;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 const ERRORS_SHOWN: usize = 30;
@@ -72,7 +72,7 @@ pub fn execute_check(params: &Value, default_root: Option<&str>) -> String {
     let root = Path::new(&workspace_root);
     if !root.join("tsconfig.json").exists() {
         // Not a TypeScript project: the older `check` meant lint.
-        return super::build::lint::execute_lint(params, default_root);
+        return super::lint::execute_lint(params, default_root);
     }
     let timeout = ["timeout", "timeout_secs"].iter().find_map(|k| params.get(*k).and_then(|v| v.as_u64())).unwrap_or(DEFAULT_TIMEOUT_SECS);
     let started = Instant::now();

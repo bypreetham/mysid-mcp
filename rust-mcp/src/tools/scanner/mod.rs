@@ -2,6 +2,7 @@
 
 pub mod orient;
 pub mod overview;
+pub mod paths;
 pub mod read;
 pub mod search;
 pub mod symbols;

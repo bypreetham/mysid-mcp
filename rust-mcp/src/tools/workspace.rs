@@ -643,7 +643,7 @@ pub fn resolve_file_in_workspace(root: &Path, name: &str, workspace: &str) -> Re
     }
 
     // Step 3: the workspace file list (gitignore-aware, minus build output and vendored dirs)
-    let matches = super::paths::find_by_name(&crate::index::scan::list_files(root), name);
+    let matches = super::scanner::paths::find_by_name(&crate::index::scan::list_files(root), name);
     match matches.len() {
         0 => Err(json!({
             "success": false,

@@ -6,16 +6,30 @@
 param(
     [switch]$SkipBuild,
     # Download the latest prebuilt mysid.exe from GitHub Releases (no Rust, no source needed)
-    [switch]$Download
+    [switch]$Download,
+    # Do not change the user PATH
+    [switch]$NoPath,
+    # Do not register mysid with any MCP client
+    [switch]$NoMcp
 )
 
 $ErrorActionPreference = "Stop"
+
+# The same switches as environment variables, for `irm <url> | iex` (which takes no arguments).
+if ($env:MYSID_NO_PATH -eq "1") { $NoPath = $true }
+if ($env:MYSID_NO_MCP -eq "1") { $NoMcp = $true }
 
 Write-Host "=========================================" -ForegroundColor Cyan
 Write-Host "       mysid Global Installer" -ForegroundColor Cyan
 Write-Host "=========================================" -ForegroundColor Cyan
 
 $ScriptDir = $PSScriptRoot
+# Started from a pipe (`& ([scriptblock]::Create((irm <url>)))`) there is no script folder and no source next to it:
+# use the prebuilt release.
+if (-not $ScriptDir) {
+    $ScriptDir = (Get-Location).Path
+    $Download = $true
+}
 
 # 1. Determine Rust project and binary paths
 $ProjectDir = $null
@@ -142,15 +156,22 @@ if (Test-Path $LocalBin) {
 
 # 4. Configure User PATH
 Write-Host "[4/4] Configuring Environment PATH..." -ForegroundColor Yellow
-$UserPath = [Environment]::GetEnvironmentVariable("PATH", "User")
-$Paths = $UserPath -split ";" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-
-if ($Paths -notcontains $InstallDir) {
-    $NewUserPath = ($Paths + $InstallDir) -join ";"
-    [Environment]::SetEnvironmentVariable("PATH", $NewUserPath, "User")
-    Write-Host "  -> Added '$InstallDir' to User PATH (Registry)." -ForegroundColor Green
+$PathChanged = $false
+if ($NoPath) {
+    Write-Host "  -> Skipped (-NoPath). Add '$InstallDir' to PATH yourself." -ForegroundColor Yellow
 } else {
-    Write-Host "  -> '$InstallDir' is already in User PATH." -ForegroundColor Green
+    $UserPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+    $Paths = $UserPath -split ";" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+    if ($Paths -notcontains $InstallDir) {
+        $NewUserPath = ($Paths + $InstallDir) -join ";"
+        # .NET also broadcasts the change (WM_SETTINGCHANGE): programs started from now on see the new PATH.
+        [Environment]::SetEnvironmentVariable("PATH", $NewUserPath, "User")
+        $PathChanged = $true
+        Write-Host "  -> Added '$InstallDir' to User PATH (Registry)." -ForegroundColor Green
+    } else {
+        Write-Host "  -> '$InstallDir' is already in User PATH." -ForegroundColor Green
+    }
 }
 
 # Update current session PATH
@@ -179,12 +200,65 @@ function Register-McpJson ($ConfigFile, $Label) {
         } else {
             $obj.mcpServers | Add-Member -MemberType NoteProperty -Name "mysid" -Value $mysidServer -Force
         }
-        $obj | ConvertTo-Json -Depth 8 | Set-Content $ConfigFile -Encoding utf8
+        # UTF-8 without a BOM: Windows PowerShell 5.1 writes a BOM with -Encoding utf8, and the clients' JSON readers reject it.
+        [System.IO.File]::WriteAllText($ConfigFile, ($obj | ConvertTo-Json -Depth 100), (New-Object System.Text.UTF8Encoding($false)))
         Write-Host "  -> Registered in ${Label}: $ConfigFile" -ForegroundColor Green
     } catch {
         Write-Warning "Failed updating ${Label} config: $_"
     }
 }
+
+# Claude Code without its `claude` command on PATH (only the desktop app is installed): user-scope servers live in
+# ~/.claude.json under "mcpServers". That file also holds Claude Code's own state, so this is careful: a size limit (Windows
+# PowerShell 5.1 cannot read a very large JSON file), a parse check, one backup, and a check that the written file still parses.
+function Register-ClaudeCodeJson ($ExePath) {
+    $file = Join-Path $env:USERPROFILE ".claude.json"
+    $manual = "claude mcp add --scope user mysid -- `"$ExePath`""
+    try {
+        $obj = $null
+        if (-not (Test-Path $file)) {
+            Write-Host "  -> Claude Code CLI not found and $file does not exist; if you use Claude Code, run:  $manual" -ForegroundColor Yellow
+            return
+        }
+        if (Test-Path $file) {
+            if ((Get-Item $file).Length -gt 1500000) {
+                Write-Warning "$file is too large to edit safely here. When the claude command is available, run:  $manual"
+                return
+            }
+            $raw = Get-Content $file -Raw
+            if (-not [string]::IsNullOrWhiteSpace($raw)) {
+                $obj = $raw | ConvertFrom-Json -ErrorAction Stop
+            }
+            if (-not (Test-Path "$file.mysid-backup")) {
+                Copy-Item $file "$file.mysid-backup"
+            }
+        }
+        if (-not $obj) {
+            $obj = [PSCustomObject]@{}
+        }
+        if (-not $obj.PSObject.Properties['mcpServers']) {
+            $obj | Add-Member -MemberType NoteProperty -Name "mcpServers" -Value ([PSCustomObject]@{}) -Force
+        }
+        $server = [PSCustomObject]@{ type = "stdio"; command = $ExePath; args = @(); env = [PSCustomObject]@{} }
+        if ($obj.mcpServers.PSObject.Properties['mysid']) {
+            $obj.mcpServers.mysid = $server
+        } else {
+            $obj.mcpServers | Add-Member -MemberType NoteProperty -Name "mysid" -Value $server -Force
+        }
+        $json = $obj | ConvertTo-Json -Depth 100
+        $check = $json | ConvertFrom-Json -ErrorAction Stop
+        if (-not $check.mcpServers.mysid) { throw "the written file would not contain the mysid entry" }
+        [System.IO.File]::WriteAllText($file, $json, (New-Object System.Text.UTF8Encoding($false)))
+        Write-Host "  -> Registered in Claude Code (user scope) by editing ${file}; a backup is ${file}.mysid-backup. Restart Claude Code." -ForegroundColor Green
+    } catch {
+        Write-Warning "Could not edit ${file}: $_"
+        Write-Host "     When the claude command is available, run:  $manual" -ForegroundColor Yellow
+    }
+}
+
+if ($NoMcp) {
+    Write-Host "  -> Skipped MCP registration (-NoMcp)." -ForegroundColor Yellow
+} else {
 
 # Antigravity / Gemini
 $GeminiConfigDir = Join-Path $env:USERPROFILE ".gemini\config"
@@ -213,13 +287,22 @@ if ($ClaudeCli) {
         }
     }
 } else {
-    Write-Host "  -> Claude Code CLI not found; if you use it, run:  claude mcp add --scope user mysid -- mysid" -ForegroundColor Yellow
+    # No `claude` command: write the entry into ~/.claude.json, which Claude Code reads.
+    Register-ClaudeCodeJson $DestExe
+}
 }
 
 Write-Host "`n-----------------------------------------" -ForegroundColor Green
 Write-Host "  SUCCESS: mysid is installed globally!" -ForegroundColor Green
 Write-Host "-----------------------------------------" -ForegroundColor Green
-Write-Host "Run anywhere: mysid --help`n" -ForegroundColor Cyan
+Write-Host "Run anywhere: mysid --help" -ForegroundColor Cyan
+if ($PathChanged) {
+    Write-Host "NEXT: open a NEW terminal (and restart Claude Code / Claude Desktop / your editor): programs that were already" -ForegroundColor Yellow
+    Write-Host "      running keep the old PATH and the old MCP list. Then check it with:  mysid help" -ForegroundColor Yellow
+} else {
+    Write-Host "NEXT: restart Claude Code / Claude Desktop / your editor so they load the MCP server. Check it with:  mysid help" -ForegroundColor Yellow
+}
+Write-Host ""
 
 # Test invocation
 & $DestExe --help

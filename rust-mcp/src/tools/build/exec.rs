@@ -294,7 +294,7 @@ pub fn execute_exec(params: &Value, default_root: Option<&str>) -> String {
     // Rust installed through rustup keeps cargo in the toolchain folder; when `cargo` is not on PATH (nothing in ~/.cargo/bin),
     // add that folder at the END of PATH so `cargo test` / `rustc` work like `mysid build` does.
     if !on_path("cargo") {
-        let found = crate::tools::build_rust::find_cargo();
+        let found = super::build_rust::find_cargo();
         if let Some(dir) = Path::new(&found).parent().filter(|d| d.is_dir() && !d.as_os_str().is_empty()) {
             let sep = if cfg!(windows) { ";" } else { ":" };
             let path = std::env::var("PATH").unwrap_or_default();

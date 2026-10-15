@@ -126,6 +126,37 @@ with open(path, "w") as f:
 PY
 }
 
+# Claude Code without its `claude` command on PATH: user-scope servers live in ~/.claude.json under "mcpServers". That file also
+# holds Claude Code's own state, so it is only edited when it already exists, after a backup, through a parse check, and the
+# result is written to a temporary file first.
+register_claude_code_json() {
+  file="$HOME/.claude.json"
+  manual="claude mcp add --scope user mysid -- $BIN_DIR/mysid"
+  if [ ! -f "$file" ] || ! command -v python3 >/dev/null 2>&1; then
+    say "  Claude Code CLI not found; if you use it, run:  $manual"
+    return 0
+  fi
+  [ -f "$file.mysid-backup" ] || cp "$file" "$file.mysid-backup"
+  if python3 - "$file" "$BIN_DIR/mysid" <<'PY'
+import json, os, sys, tempfile
+path, cmd = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8") as f:
+    data = json.load(f)
+data.setdefault("mcpServers", {})["mysid"] = {"type": "stdio", "command": cmd, "args": [], "env": {}}
+text = json.dumps(data, indent=2, ensure_ascii=False)
+assert json.loads(text)["mcpServers"]["mysid"]["command"] == cmd
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    f.write(text)
+os.replace(tmp, path)
+PY
+  then
+    say "  Registered in Claude Code (user scope) by editing $file; a backup is $file.mysid-backup. Restart Claude Code."
+  else
+    say "  Could not edit $file. When the claude command is available, run:  $manual"
+  fi
+}
+
 if [ "${MYSID_NO_MCP:-}" = 1 ]; then
   say "Skipping MCP registration (MYSID_NO_MCP=1)."
 else
@@ -138,7 +169,7 @@ else
       say "  Could not register in Claude Code. Run:  claude mcp add --scope user mysid -- $BIN_DIR/mysid"
     fi
   else
-    say "  Claude Code CLI not found; if you use it, run:  claude mcp add --scope user mysid -- $BIN_DIR/mysid"
+    register_claude_code_json
   fi
   desktop="$HOME/Library/Application Support/Claude"
   if [ "$os" = macos ] && [ -d "$desktop" ]; then
@@ -151,4 +182,5 @@ fi
 
 say ""
 say "mysid is installed. In a project folder: mysid set .   then   mysid help"
+say "NEXT: open a NEW terminal (and restart Claude Code / your editor): programs that were already running keep the old PATH and MCP list."
 "$BIN_DIR/mysid" help 2>&1 | head -n 3

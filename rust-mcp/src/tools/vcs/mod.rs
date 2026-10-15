@@ -195,7 +195,7 @@ mod tests {
         sorted.dedup();
         assert_eq!(sorted.len(), names.len(), "a name or alias is registered twice: {:?}", names);
         for n in &names {
-            assert!(crate::KNOWN_COMMANDS.contains(n), "{} is registered but missing from KNOWN_COMMANDS", n);
+            assert!(crate::dispatch::KNOWN_COMMANDS.contains(n), "{} is registered but missing from KNOWN_COMMANDS", n);
         }
         assert_eq!(find("init").map(|c| c.name), Some("bootstrap"));
         assert!(find("nonsense").is_none());
