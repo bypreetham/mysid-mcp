@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-use super::workspace::{resolve_file_in_workspace, resolve_root};
+use crate::tools::workspace::{resolve_file_in_workspace, resolve_root};
 use crate::adapters::detect_adapter;
 
 use crate::textindex::{BINARY_EXTS, MAX_FILE_BYTES};

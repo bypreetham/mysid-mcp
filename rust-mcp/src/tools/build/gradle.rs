@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
-use super::build_worker::{fmt_secs, now_ms, Status};
+use super::worker::{fmt_secs, now_ms, Status};
 
 /// Distinct warning/error messages listed in a report; identical ones across files are grouped.
 const MAX_WARNING_GROUPS: usize = 6;

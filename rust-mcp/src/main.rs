@@ -137,7 +137,7 @@ fn dispatch_method(method: &str, params: &Value, default_root: Option<&str>, wor
                         drop(mgr);
 
                         // Per-project scratch dir for logs (build.log); best effort.
-                        let _ = tools::build_log::ensure_dir(Path::new(&resolved_path));
+                        let _ = tools::build::log::ensure_dir(Path::new(&resolved_path));
 
                         // Automatically list root directory entries (L1 depth) to save LLM roundtrips
                         let list_params = json!({
@@ -151,7 +151,7 @@ fn dispatch_method(method: &str, params: &Value, default_root: Option<&str>, wor
                             .unwrap_or_else(|| json!([]));
 
                         let show_all = matches!(params.get("all"), Some(Value::Bool(true))) || matches!(params.get("all"), Some(Value::String(s)) if !s.is_empty() && s != "false");
-                        let summary = tools::orient::workspace_map(Path::new(&resolved_path), show_all);
+                        let summary = tools::scanner::orient::workspace_map(Path::new(&resolved_path), show_all);
                         json!({
                             "success": true,
                             "workspace": resolved_path,
@@ -201,7 +201,7 @@ fn dispatch_method(method: &str, params: &Value, default_root: Option<&str>, wor
             };
 
             let summary = match current.as_deref() {
-                Some(root) => tools::orient::workspace_map(Path::new(root), false),
+                Some(root) => tools::scanner::orient::workspace_map(Path::new(root), false),
                 None => String::new(),
             };
             let output = format!(
@@ -225,30 +225,30 @@ chosen from: {}
 
         // ── File / project tools ──────────────────────────────────────────────
         "help" => get_root_help().to_string(),
-        "search" => shorten_paths(tools::search::execute_search(params, default_root), params, default_root),
-        "read" | "peek" => shorten_paths(tools::read::execute_read(params, default_root), params, default_root),
+        "search" => shorten_paths(tools::scanner::search::execute_search(params, default_root), params, default_root),
+        "read" | "peek" => shorten_paths(tools::scanner::read::execute_read(params, default_root), params, default_root),
         "graph" => shorten_paths(tools::graph::execute_graph(params, default_root), params, default_root),
         "patch" => tools::patch::execute_patch(params, default_root),
         "patch_batch" => tools::patch::execute_patch_batch(params, default_root),
         "replace" => tools::replace::execute_replace(params, default_root),
         "create_file" => tools::file::execute_create_file(params, default_root),
-        "write" => tools::filewrite::execute_write(params, default_root),
-        "append" => tools::filewrite::execute_append(params, default_root),
-        "edit" => tools::filewrite::execute_edit(params, default_root),
+        "write" => tools::file::execute_write(params, default_root),
+        "append" => tools::file::execute_append(params, default_root),
+        "edit" => tools::file::execute_edit(params, default_root),
         "list" | "list_dir" | "ls" | "dir" | "listdir" => tools::file::execute_list_dir(params, default_root),
         "mkdir" => tools::file::execute_mkdir(params, default_root),
         "rename" | "mv" => tools::file::execute_rename(params, default_root),
         "delete" | "rm" => tools::file::execute_delete(params, default_root),
         "file" => tools::file::execute_file(params, default_root),
-        "exec" | "run" => tools::exec::execute_exec(params, default_root),
-        "lint" => tools::lint::execute_lint(params, default_root),
+        "exec" | "run" => tools::build::exec::execute_exec(params, default_root),
+        "lint" => tools::build::lint::execute_lint(params, default_root),
         "check" => tools::check::execute_check(params, default_root),
-        "symbols" => tools::symbols::execute_symbols(params, default_root),
-        "overview" | "signatures" => shorten_paths(tools::overview::execute_overview(params, default_root), params, default_root),
+        "symbols" => tools::scanner::symbols::execute_symbols(params, default_root),
+        "overview" | "signatures" => shorten_paths(tools::scanner::overview::execute_overview(params, default_root), params, default_root),
         "build" => tools::build::execute_build(params, default_root),
-        "release" | "aab" => tools::build::execute_release(params, default_root),
-        "install" => tools::build::execute_install(params, default_root),
-        "debug" => tools::debug::execute_debug(params, default_root),
+        "release" | "aab" => tools::release::execute_release(params, default_root),
+        "install" => tools::release::execute_install(params, default_root),
+        "debug" => tools::build::debug::execute_debug(params, default_root),
         "dev" => tools::dev::execute_dev(params, default_root),
         "test" => tools::test_run::execute_test(params, default_root),
         // Version control: one registry (tools/vcs) maps bootstrap, commit, status, branch, history, publish,
@@ -261,7 +261,7 @@ chosen from: {}
         "copy" | "cp" => tools::file::execute_copy(params, default_root),
         "deps" => tools::deps::execute_deps(params, default_root),
         "doctor" => tools::doctor::execute_doctor(params, default_root),
-        "tree" => tools::orient::execute_tree(params, default_root),
+        "tree" => tools::scanner::orient::execute_tree(params, default_root),
         "skill" => tools::skill::execute_skill(params, default_root),
         "new" => tools::scaffold::execute_new(params, default_root),
         "apply" => tools::apply::execute_apply(params, default_root),
@@ -281,7 +281,7 @@ chosen from: {}
             }
             tools::android::execute_android(&p, default_root)
         }
-        "inspect_symbol" => shorten_paths(tools::read::execute_read(params, default_root), params, default_root),
+        "inspect_symbol" => shorten_paths(tools::scanner::read::execute_read(params, default_root), params, default_root),
         _ => {
             let hint = suggest_commands(method);
             let did_you_mean = if hint.is_empty() { String::new() } else { format!(" Did you mean: {}?", hint.join(", ")) };
@@ -1254,6 +1254,31 @@ const SHORT_HELP_COMMANDS: &[&str] = &["set", "list", "overview", "read", "searc
 /// The Android / device commands: not listed in `mysid help remaining`; `mysid android help` is their one page.
 const ANDROID_COMMANDS: &[&str] = &["android", "adb", "devices", "wifi", "connect_wifi", "debug", "release", "aab"];
 
+/// The file operations: not listed in `mysid help remaining`; `mysid file help` is their one page.
+const FILE_COMMANDS: &[&str] = &["write", "append", "mkdir", "copy", "cp", "rename", "mv", "delete", "rm", "create_file", "list_dir", "ls", "dir", "listdir"];
+
+/// The reading utilities, with their full syntax: shown at the top of `mysid help remaining`.
+const READING_UTILITIES: &str = "UTILITIES: look at the code (the short help has the everyday forms; these are all the options)
+  mysid read <file>                      a file up to 150 lines whole; a longer source file gives its outline and the command for a slice
+  mysid read <file>#L10-60               a slice, up to 200 lines (600 with --full); File.kt:10-50 also works
+  mysid read <slice1> <slice2> ...       several slices in ONE call
+  mysid read <Symbol>                    a symbol's definition and its top callers
+  mysid tree [folder] [--depth 1-4] [--all]
+                                         the folder map: folders with their code-file counts, depth 2 by default; --all adds dot-folders
+  mysid overview <file> [<file2> ...]    classes, functions and signatures with line numbers (no code)
+  mysid overview <folder> [--depth 1] [--match word] [--format json]
+                                         outlines of every file in a folder; --depth 1 = folder names and counts only; --match keeps files
+                                         whose path, class or function contains the word
+  mysid search \"text\" [--types kt,ts] [--regex] [--case] [--context 1] [--group] [--count] [--max N] [--offset N] [--all] [--vendor]
+                                         --count = matching lines per file; --offset N = next page; --max N up to 500; --group = file name once;
+                                         --all also searches md/txt; --vendor also searches external/ and third_party/
+  mysid symbols <file>                   a flat list of the symbols in one file: [KIND] name line N (cheaper than overview)
+Files are named by name only (Foo.kt); add a folder (ui/Foo.kt) only if two files share a name.
+";
+
+/// Commands shown in the utilities block instead of the one-line list.
+const UTILITY_COMMANDS: &[&str] = &["tree", "symbols"];
+
 /// One line per command that is not in the short help: its name and the first line of its own help page.
 fn get_remaining_help() -> &'static str {
     static TEXT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -1262,7 +1287,7 @@ fn get_remaining_help() -> &'static str {
         let mut seen: Vec<&'static str> = Vec::new();
         let mut without_page: Vec<&str> = Vec::new();
         for name in KNOWN_COMMANDS {
-            if SHORT_HELP_COMMANDS.contains(name) || ANDROID_COMMANDS.contains(name) {
+            if SHORT_HELP_COMMANDS.contains(name) || ANDROID_COMMANDS.contains(name) || FILE_COMMANDS.contains(name) || UTILITY_COMMANDS.contains(name) {
                 continue;
             }
             match get_tool_help(name) {
@@ -1278,11 +1303,12 @@ fn get_remaining_help() -> &'static str {
                 None => without_page.push(name),
             }
         }
-        let mut out = format!("mysid: the commands that are not in `mysid help` ({} with a help page)\n\n{}\n", lines.len(), lines.join("\n"));
+        let mut out = format!("mysid: the commands that are not in `mysid help`\n\n{}\nOTHER COMMANDS ({} with a help page)\n\n{}\n", READING_UTILITIES, lines.len(), lines.join("\n"));
         if !without_page.is_empty() {
             out.push_str(&format!("\nAlso accepted (aliases and small helpers): {}\n", without_page.join(", ")));
         }
-        out.push_str("\nAndroid / device commands (devices, wifi, install, debug, release, goto, scenario, keyevent ...): mysid android help\n");
+        out.push_str("\nFile operations (new, write, append, mkdir, mv, cp, rm, ls): mysid file help\n");
+        out.push_str("Android / device commands (devices, wifi, install, debug, release, goto, scenario, keyevent ...): mysid android help\n");
         out.push_str("\nOne command in detail: mysid help <command>.   The commands in the short list: mysid help.\n");
         out
     })
@@ -1291,6 +1317,7 @@ fn get_remaining_help() -> &'static str {
 fn get_tool_help(tool: &str) -> Option<&'static str> {
     match tool.to_ascii_lowercase().trim_start_matches('-') {
         "remaining" | "rest" | "more" => Some(get_remaining_help()),
+        "symbols" => Some("mysid symbols: the symbols of one file, one per line\n\nUsage:\n  mysid symbols <file>      [KIND] name line N, for every class, function and method (file name only: Foo.kt)\n\nCheaper than mysid overview when only the names and line numbers matter; overview adds signatures and parameters.\n"),
         "all" | "full" | "commands" => Some(get_full_help()),
         "replace" => Some(
             "mysid replace: Global search-and-replace refactoring\n\n\
@@ -1398,23 +1425,25 @@ A snippet whose old text is missing, or matches more than once, stops everything
 Several files in one call: mysid apply (put the file name on the line before each <<<<<<< SEARCH).\n"
         ),
         "file" => Some(
-            "mysid file: Filesystem management utilities\n\n\
-Description:\n  \
-  Unified file lifecycle operations. Auto-creates parent directories on write/move.\n\n\
-Usage:\n  \
-  mysid file new <path> <content>         Create a file (auto-creates parent dirs); an existing file is NOT replaced unless --overwrite\n  \
-  mysid file new <path> --stdin | -       ... content from stdin (heredoc / pipe): no shell quoting\n  \
-  mysid file new <path> --from <file>     ... content copied from a file (piped input also works)\n  \
-                                          (mysid write <path> does the same but refuses to replace an existing file)\n  \
-  mysid file mkdir <path>                 Recursively create directory\n  \
-  mysid file rename <old_path> <new_path> Rename or move file/directory\n  \
-  mysid file delete <path> [--recursive]  Delete file or directory\n  \
-  mysid file list [path] [-L<depth>]      List files (defaults to -L1, respects .gitignore)\n\n\
+            "mysid file: file operations, by what they do\n\n\
+CREATE\n  \
+  mysid file new <path> --stdin          new file, content on stdin (folders are made). If the file exists it stops with\n                                         \"already exists\": add --overwrite to replace it  [also: --from <file>, or the text as an argument]\n  \
+  mysid write <path> --stdin             the same, and never replaces an existing file\n  \
+  mysid append <path> --stdin            add text to the end of a file, on its own line  [--create makes the file when missing]\n  \
+  mysid file mkdir <path>                a folder, with its parents\n\n\
+MOVE / COPY\n  \
+  mysid file mv <old> <new>              rename or move a file or folder         (also: rename, move)\n  \
+  mysid file cp <src>... <dest>          copy files or folders, many at once; --overwrite replaces   (also: copy)\n\n\
+REMOVE\n  \
+  mysid file rm <path> [--recursive]     delete a file, or a folder with --recursive   (also: delete, remove)\n\n\
+LOOK\n  \
+  mysid file ls [path] [-L<depth>]       what is in a folder, same as mysid list   (also: list, dir)\n\n\
 Examples:\n  \
-  mysid file new config/settings.json \"{\\\"theme\\\":\\\"dark\\\"}\"\n  \
-  mysid file rename old_name.kt new_name.kt\n  \
-  mysid file delete temp_cache --recursive\n  \
-  mysid file list app -L2\n"
+  mysid file new config/settings.json --stdin\n  \
+  mysid file mv old_name.kt new_name.kt\n  \
+  mysid file cp ../other/src src/vendor --overwrite\n  \
+  mysid file rm temp_cache --recursive\n\n\
+Changing the inside of a file is not here: mysid patch, edit, replace, patch_batch (see mysid help).\n"
         ),
         "graph" => Some(
             "mysid graph: callers and callees of a symbol
@@ -1485,7 +1514,7 @@ Usage:\n  \
 Examples:\n  \
   mysid install\n"
         ),
-        "debug" => Some(tools::debug::HELP),
+        "debug" => Some(tools::build::debug::HELP),
         "dev" => Some(tools::dev::HELP),
         "test" => Some(tools::test_run::HELP),
         "status" => Some("mysid status: what changed, in git terms\n\nUsage:\n  mysid status     branch, upstream (ahead/behind), changed files (staged / unstaged / untracked), last commit\n  mysid branch     local branches with their last commit\n\nRead only. Secret-looking files are marked: mysid commit leaves them out.\n"),
@@ -1494,7 +1523,7 @@ Examples:\n  \
         "copy" | "cp" => Some("mysid copy: copy files or folders into the workspace (same as mysid file copy)\n\nUsage:\n  mysid copy <source> <destination>\n  mysid copy <source1> <source2> ... <destination-folder>\n  mysid copy ../other/src src/vendor --overwrite\n\nSources may be anywhere (a sibling project, a bare file name); the destination must be inside the workspace. Folders are\ncopied whole except .git, node_modules and .mysid. If any source is missing or any target exists, nothing is copied\n(--overwrite replaces).\n"),
         "deps" => Some(tools::deps::HELP),
         "doctor" => Some(tools::doctor::HELP),
-        "tree" => Some(tools::orient::TREE_HELP),
+        "tree" => Some(tools::scanner::orient::TREE_HELP),
         "new" => Some(
             "mysid new: create a new project\n\n\
 Usage:\n  \
@@ -1784,15 +1813,15 @@ Examples:\n  \
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
-    // Internal: the detached process `mysid build` starts to run a build (see tools/build_worker.rs).
+    // Internal: the detached process `mysid build` starts to run a build (see tools/build/worker.rs).
     if args.len() == 2 && args[0] == "__build_worker" {
-        tools::build_worker::run_worker(&args[1]);
+        tools::build::worker::run_worker(&args[1]);
         return;
     }
 
-    // Internal: the detached logcat recorder `mysid debug` starts (see tools/debug.rs).
+    // Internal: the detached logcat recorder `mysid debug` starts (see tools/build/debug.rs).
     if args.len() == 2 && args[0] == "__debug_recorder" {
-        tools::debug::run_recorder(&args[1]);
+        tools::build::debug::run_recorder(&args[1]);
         return;
     }
 

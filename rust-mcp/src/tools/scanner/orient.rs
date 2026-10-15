@@ -391,13 +391,13 @@ Folders only, counts only, capped at 120 lines: use it to choose the folder for 
 
 pub fn execute_tree(params: &serde_json::Value, default_root: Option<&str>) -> String {
     let fail = |m: String| serde_json::json!({ "success": false, "error": m }).to_string();
-    let ws = match super::workspace::resolve_existing_root(params, "workspace_root", default_root) {
+    let ws = match crate::tools::workspace::resolve_existing_root(params, "workspace_root", default_root) {
         Ok(p) => p,
         Err(e) => return e,
     };
     let root = Path::new(&ws);
     let start = match params.get("path").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
-        Some(p) => super::workspace::resolve_or_join(root, p.trim(), &ws),
+        Some(p) => crate::tools::workspace::resolve_or_join(root, p.trim(), &ws),
         None => root.to_path_buf(),
     };
     if !start.is_dir() {

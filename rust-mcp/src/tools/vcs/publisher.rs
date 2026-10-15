@@ -38,7 +38,7 @@ fn git_push(root: &Path, name: &str, branch: &str, secs: u64) -> Result<Out, Str
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000);
     }
-    let run = crate::tools::exec::run_with_timeout(cmd, std::time::Duration::from_secs(secs)).map_err(|e| format!("git is not available ({}).", e))?;
+    let run = crate::tools::build::exec::run_with_timeout(cmd, std::time::Duration::from_secs(secs)).map_err(|e| format!("git is not available ({}).", e))?;
     if run.timed_out {
         return Err(format!("the push did not finish in {}s (a sign-in window may be waiting for you, or the network is slow); nothing is lost, run it again", secs));
     }

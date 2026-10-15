@@ -8,9 +8,9 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use super::build_log;
+use super::build::log;
 use super::build_rust;
-use super::exec::run_with_timeout;
+use super::build::exec::run_with_timeout;
 use super::workspace::resolve_existing_root;
 
 pub const HELP: &str = "mysid test: run the project tests, print failures only\n\n\
@@ -271,7 +271,7 @@ pub fn execute_test(params: &Value, default_root: Option<&str>) -> String {
     };
     let secs = started.elapsed().as_secs_f64();
     let all = format!("{}\n{}", run.stdout, run.stderr);
-    if let Ok(dir) = build_log::ensure_dir(root) {
+    if let Ok(dir) = log::ensure_dir(root) {
         let _ = fs::write(dir.join("test.log"), &all);
     }
     if run.timed_out {

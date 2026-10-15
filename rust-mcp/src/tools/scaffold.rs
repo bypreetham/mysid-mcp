@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use super::exec::run_with_timeout;
+use super::build::exec::run_with_timeout;
 
 const CREATE_TIMEOUT: Duration = Duration::from_secs(300);
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(900);

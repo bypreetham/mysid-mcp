@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
 
-use super::workspace::{resolve_file_in_workspace, resolve_root};
+use crate::tools::workspace::{resolve_file_in_workspace, resolve_root};
 use crate::index::{Index, Outline};
 pub use crate::parsers::{find_parser, is_supported_extension, MethodSignature, TypeInfo};
 
@@ -79,14 +79,14 @@ pub fn execute_overview(params: &Value, default_root: Option<&str>) -> String {
         let resolved = match resolve_file_in_workspace(root, clean_target, &workspace_root) {
             Ok(p) => p,
             Err(e) => {
-                errors.push(format!("Could not resolve '{}': {}", clean_target, super::workspace::resolution_message(&e)));
+                errors.push(format!("Could not resolve '{}': {}", clean_target, crate::tools::workspace::resolution_message(&e)));
                 continue;
             }
         };
 
         if resolved.is_dir() && depth.is_some() {
             // `--depth n`: the folder map (names and code counts), no outlines.
-            tree_blocks.push(super::orient::tree(root, &resolved, depth.unwrap_or(1), false));
+            tree_blocks.push(crate::tools::scanner::orient::tree(root, &resolved, depth.unwrap_or(1), false));
             continue;
         }
         if resolved.is_dir() {

@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use super::build_gradle;
-use super::exec::run_with_timeout;
+use crate::tools::build::gradle;
+use crate::tools::build::exec::run_with_timeout;
 
 const JARSIGNER_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -124,7 +124,7 @@ fn jarsigner_path(env: &[(String, String)]) -> String {
 
 /// After a successful `bundleRelease`: is there a fresh, well-formed, signed bundle?
 pub fn verify_release(root: &Path, env: &[(String, String)], since_ms: u64) -> Verification {
-    let Some((path, mtime, len)) = build_gradle::newest_artifact_path(root, since_ms, "bundle", "aab") else {
+    let Some((path, mtime, len)) = gradle::newest_artifact_path(root, since_ms, "bundle", "aab") else {
         return Verification {
             notes: vec!["no bundle found under */build/outputs/bundle/".to_string()],
             signature: "not checked (no bundle)".to_string(),

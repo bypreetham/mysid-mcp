@@ -1,10 +1,17 @@
+pub mod debug;
+pub mod exec;
+pub mod gradle;
+pub mod lint;
+pub mod log;
+pub mod worker;
+
 use serde_json::{json, Value};
 use std::path::Path;
 use std::process::Command;
 
 use std::time::Duration;
 
-use super::build_worker::{self, Job, Kind};
+use worker::{Job, Kind};
 use super::build_rust;
 
 const MAX_OUTPUT_BYTES: usize = 32_768;
@@ -35,22 +42,22 @@ pub fn execute_build(params: &Value, default_root: Option<&str>) -> String {
         // `release` means an Android AAB, except in a Cargo workspace where it means `--release`.
         let is_cargo = Path::new(&workspace_root).join("Cargo.toml").exists();
         if !is_cargo && (trimmed.eq_ignore_ascii_case("release") || trimmed.eq_ignore_ascii_case("aab")) {
-            return execute_release(params, default_root);
+            return super::release::execute_release(params, default_root);
         }
     }
 
     let wait = Duration::from_secs(
-        params.get("wait").and_then(|v| v.as_u64()).unwrap_or(build_worker::default_wait_secs()),
+        params.get("wait").and_then(|v| v.as_u64()).unwrap_or(worker::default_wait_secs()),
     );
     match extra_args.as_deref().map(|e| e.trim().to_ascii_lowercase()).as_deref() {
         Some("status") => {
-            return match build_worker::wait(&workspace_root, wait, false) {
+            return match worker::wait(&workspace_root, wait, false) {
                 Some(st) => build_response(&st, false),
                 None => json!({ "success": true, "output": "No build has been started in this workspace." }).to_string(),
             };
         }
         Some("stop") | Some("cancel") => {
-            return json!({ "success": true, "output": build_worker::stop(&workspace_root) }).to_string();
+            return json!({ "success": true, "output": worker::stop(&workspace_root) }).to_string();
         }
         _ => {}
     }
@@ -260,21 +267,21 @@ pub fn execute_build(params: &Value, default_root: Option<&str>) -> String {
 
     // The build runs in a detached worker (full output streams to .mysid/build.log); wait a short
     // budget for the result and otherwise report progress instead of blocking the caller.
-    let attached = match build_worker::start(&workspace_root, &job) {
+    let attached = match worker::start(&workspace_root, &job) {
         Ok(a) => a,
         Err(e) => return json!({ "success": false, "error": e }).to_string(),
     };
     if !attached {
         eprintln!("BUILD STARTED - {} - in {} - log: .mysid/build.log", job.stack, job.cwd);
     }
-    match build_worker::wait(&workspace_root, wait, !attached) {
+    match worker::wait(&workspace_root, wait, !attached) {
         Some(st) => build_response(&st, attached),
         None => json!({ "success": false, "error": "build status unavailable" }).to_string(),
     }
 }
 
-fn build_response(st: &build_worker::Status, attached: bool) -> String {
-    let mut text = build_worker::render(st);
+pub(crate) fn build_response(st: &worker::Status, attached: bool) -> String {
+    let mut text = worker::render(st);
     if attached && st.state == "running" {
         text = format!("(a build is already running)
 {}", text);
@@ -290,7 +297,7 @@ fn build_response(st: &build_worker::Status, attached: bool) -> String {
 
 /// The JDK a project script pins (`set "JAVA_HOME=..."` in run.bat), used when the environment
 /// has no usable JAVA_HOME. Gradle is run directly, so the script's setting must be carried over.
-fn java_home_env(root: &Path) -> Vec<(String, String)> {
+pub(crate) fn java_home_env(root: &Path) -> Vec<(String, String)> {
     if std::env::var("JAVA_HOME").map_or(false, |h| Path::new(&h).exists()) {
         return Vec::new();
     }
@@ -308,203 +315,6 @@ fn java_home_env(root: &Path) -> Vec<(String, String)> {
         }
     }
     Vec::new()
-}
-
-/// `mysid release`: raises versionCode by one and builds the release AAB (`bundleRelease`) on the
-/// detached worker, so it reports progress like `mysid build`. The bump happens inside the worker,
-/// right before Gradle starts, and is put back if the build fails or is cancelled. A release that
-/// is already running is attached to, not bumped again.
-pub fn execute_release(params: &Value, default_root: Option<&str>) -> String {
-    let workspace_root = match resolve_existing_root(params, "workspace_root", default_root) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
-
-    let root = Path::new(&workspace_root);
-    let android = root.join("gradlew.bat").exists() || root.join("gradlew").exists();
-    if android {
-        if let Some(answer) = super::stale::guard(root, params) {
-            return answer;
-        }
-    }
-    if !android && super::release_web::is_web_project(root) {
-        return web_release(&workspace_root, root, params);
-    }
-    if !android {
-        return json!({
-            "success": false,
-            "error": format!("No gradlew or package.json found in {}: `mysid release` builds Android projects and deploys web projects", root.display())
-        })
-        .to_string();
-    }
-
-    #[cfg(target_os = "windows")]
-    let gradlew = if root.join("gradlew.bat").exists() {
-        root.join("gradlew.bat").to_string_lossy().to_string()
-    } else {
-        "gradlew.bat".to_string()
-    };
-    #[cfg(not(target_os = "windows"))]
-    let gradlew = if root.join("gradlew").exists() {
-        "./gradlew".to_string()
-    } else {
-        "gradlew".to_string()
-    };
-
-    let job = Job {
-        stack: "Android release (Gradle)".to_string(),
-        kind: Kind::GradleRelease,
-        program: gradlew,
-        args: vec!["bundleRelease".to_string(), "-x".to_string(), "test".to_string(), "--console=plain".to_string()],
-        cwd: root.to_string_lossy().to_string(),
-        env: java_home_env(root),
-        bump: true,
-    };
-
-    let wait = Duration::from_secs(
-        params.get("wait").and_then(|v| v.as_u64()).unwrap_or(build_worker::default_wait_secs()),
-    );
-    let attached = match build_worker::start(&workspace_root, &job) {
-        Ok(a) => a,
-        Err(e) => return json!({ "success": false, "error": e }).to_string(),
-    };
-    if !attached {
-        eprintln!("RELEASE STARTED - {} - in {} - versionCode +1 - log: .mysid/build.log", job.stack, job.cwd);
-    }
-    match build_worker::wait(&workspace_root, wait, !attached) {
-        Some(st) => build_response(&st, attached),
-        None => json!({ "success": false, "error": "build status unavailable" }).to_string(),
-    }
-}
-
-/// `mysid release` in a web project: build and `netlify deploy --prod` in the detached worker.
-fn web_release(workspace_root: &str, root: &Path, params: &Value) -> String {
-    let job = Job {
-        stack: super::release_web::STACK.to_string(),
-        kind: Kind::WebRelease,
-        program: "netlify".to_string(),
-        args: Vec::new(),
-        cwd: root.to_string_lossy().to_string(),
-        env: Vec::new(),
-        bump: false,
-    };
-    let wait = Duration::from_secs(
-        params.get("wait").and_then(|v| v.as_u64()).unwrap_or(build_worker::default_wait_secs()),
-    );
-    let attached = match build_worker::start(workspace_root, &job) {
-        Ok(a) => a,
-        Err(e) => return json!({ "success": false, "error": e }).to_string(),
-    };
-    if !attached {
-        eprintln!("RELEASE STARTED - {} - in {} - log: .mysid/release.log", job.stack, job.cwd);
-    }
-    match build_worker::wait(workspace_root, wait, !attached) {
-        Some(st) => build_response(&st, attached),
-        None => json!({ "success": false, "error": "release status unavailable" }).to_string(),
-    }
-}
-
-/// Run `npm install` (or yarn/pnpm) and return stdout + stderr + extracted warnings.
-/// Always returns output even on success so the LLM can inspect peer-dep warnings.
-pub fn execute_install(params: &Value, default_root: Option<&str>) -> String {
-    let workspace_root = match resolve_existing_root(params, "workspace_root", default_root) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
-
-    let root = Path::new(&workspace_root);
-
-    if root.join("gradlew.bat").exists() || root.join("gradlew").exists() || root.join("app").exists() {
-        let mut p = params.clone();
-        if let Some(obj) = p.as_object_mut() {
-            obj.insert("action".to_string(), json!("install"));
-        }
-        return super::android::execute_android(&p, default_root);
-    }
-
-    if root.join("Cargo.toml").exists() && !root.join("package.json").exists() {
-        return super::install_rust::execute(root, params);
-    }
-
-    if !root.join("package.json").exists() {
-        return json!({
-            "success": false,
-            "error": "No package.json found — install only supports Node/npm or Android projects."
-        })
-        .to_string();
-    }
-
-    // Detect package manager by lockfile
-    let (prog, install_args): (&str, Vec<&str>) = if root.join("pnpm-lock.yaml").exists() {
-        ("pnpm", vec!["install"])
-    } else if root.join("yarn.lock").exists() {
-        ("yarn", vec![])
-    } else {
-        ("npm", vec!["install"])
-    };
-
-    let stack = prog.to_string();
-
-    #[cfg(target_os = "windows")]
-    let raw_output = {
-        let mut full_args = vec!["/C", prog];
-        full_args.extend_from_slice(&install_args);
-        Command::new("cmd.exe")
-            .args(&full_args)
-            .current_dir(root)
-            .output()
-    };
-
-    #[cfg(not(target_os = "windows"))]
-    let raw_output = Command::new(prog)
-        .args(&install_args)
-        .current_dir(root)
-        .output();
-
-    match raw_output {
-        Err(e) => json!({
-            "success": false,
-            "stack": stack,
-            "error": format!("Failed to spawn '{}': {}", prog, e)
-        })
-        .to_string(),
-        Ok(out) => {
-            let exit_code = out.status.code().unwrap_or(-1);
-            let mut stdout_str = String::from_utf8_lossy(&out.stdout).to_string();
-            let mut stderr_str = String::from_utf8_lossy(&out.stderr).to_string();
-
-            if stdout_str.len() > MAX_OUTPUT_BYTES {
-                let start = stdout_str.len() - MAX_OUTPUT_BYTES;
-                stdout_str = format!("[... truncated ...]\n{}", &stdout_str[start..]);
-            }
-            if stderr_str.len() > MAX_OUTPUT_BYTES {
-                let start = stderr_str.len() - MAX_OUTPUT_BYTES;
-                stderr_str = format!("[... truncated ...]\n{}", &stderr_str[start..]);
-            }
-
-            // Surface npm warnings / deprecation notices for the LLM
-            let warnings: Vec<&str> = stderr_str
-                .lines()
-                .filter(|l| {
-                    let lower = l.to_ascii_lowercase();
-                    lower.starts_with("npm warn")
-                        || lower.starts_with("warn ")
-                        || lower.contains("deprecated")
-                        || lower.contains("peer dep")
-                })
-                .collect();
-
-            json!({
-                "success": exit_code == 0,
-                "stack": stack,
-                "exit_code": exit_code,
-                "stdout": stdout_str.trim(),
-                "stderr": stderr_str.trim(),
-                "warnings": warnings
-            })
-            .to_string()
-        }
-    }
 }
 
 /// Run dev server (`npm run dev`) or test-launch it.

@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 
-use super::build_worker::{self, Status};
+use crate::tools::build::worker::{self, Status};
 
 pub const RELEASE_LOG: &str = "release.log";
 pub const STACK: &str = "React release (Netlify)";
@@ -43,7 +43,7 @@ impl Log {
 
 fn crumb(log: &Log, status: &Mutex<Status>, stage: &str, detail: &str) {
     log.crumb(&format!("{}: {}", stage, detail));
-    build_worker::note(&mut status.lock().unwrap(), stage, detail);
+    worker::note(&mut status.lock().unwrap(), stage, detail);
 }
 
 /// A command (`npm`, `netlify` are .cmd shims on Windows) with the project as working directory.
@@ -157,7 +157,7 @@ fn deploy_urls(out: &str) -> (Option<String>, Option<String>) {
 
 fn fail(log: &Log, step: &str, secs: u64, lines: &[String]) -> (bool, i32, String) {
     log.crumb(&format!("FAILED at {}", step));
-    let mut r = format!("RELEASE FAILED at {} (React, Netlify, {})", step, build_worker::fmt_secs(secs));
+    let mut r = format!("RELEASE FAILED at {} (React, Netlify, {})", step, worker::fmt_secs(secs));
     for l in lines {
         r.push_str(&format!("\n  {}", l));
     }
@@ -220,7 +220,7 @@ pub fn release(root: &Path, status: &Mutex<Status>) -> (bool, i32, String) {
         return fail(&log, "deploy", secs(), &[format!("deploy exited {} but printed no site URL (see .mysid/{})", deploy.code, RELEASE_LOG)]);
     };
     crumb(&log, status, "done", &url);
-    let mut report = format!("RELEASE OK (React, Netlify, {})\nURL: {}", build_worker::fmt_secs(secs()), url);
+    let mut report = format!("RELEASE OK (React, Netlify, {})\nURL: {}", worker::fmt_secs(secs()), url);
     if let Some(u) = unique.filter(|u| *u != url) {
         report.push_str(&format!("\ndeploy: {}", u));
     }

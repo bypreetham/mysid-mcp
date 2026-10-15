@@ -15,7 +15,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use super::{build_gradle, build_log, build_rust, release_bump, release_check, release_web};
+use super::{gradle, log};
+use crate::tools::build_rust;
+use crate::tools::release::{bump as release_bump, check as release_check, web as release_web};
 
 const JOB_FILE: &str = "build.job.json";
 const STATUS_FILE: &str = "build.status.json";
@@ -96,7 +98,7 @@ pub fn now_ms() -> u64 {
 /// stage trail and the status line, so nothing mysid does is invisible while Gradle is quiet.
 pub fn note(p: &mut Status, stage: &str, detail: &str) {
     if p.stage != stage {
-        build_gradle::close_stage(p, now_ms());
+        gradle::close_stage(p, now_ms());
         p.stage = stage.to_string();
         p.stage_started_ms = now_ms();
     }
@@ -113,7 +115,7 @@ pub fn fmt_secs(secs: u64) -> String {
 }
 
 fn state_dir(workspace_root: &str) -> PathBuf {
-    build_log::ensure_dir(Path::new(workspace_root)).unwrap_or_else(|_| {
+    log::ensure_dir(Path::new(workspace_root)).unwrap_or_else(|_| {
         let dir = std::env::temp_dir().join("mysid");
         let _ = fs::create_dir_all(&dir);
         dir
@@ -160,8 +162,8 @@ pub fn read_status(workspace_root: &str) -> Option<Status> {
         s.summary = format!(
             "BUILD FAILED - the build worker stopped responding after {} (see {}/{})",
             fmt_secs(s.updated_ms.saturating_sub(s.started_ms) / 1000),
-            build_log::MYSID_DIR,
-            build_log::BUILD_LOG
+            log::MYSID_DIR,
+            log::BUILD_LOG
         );
     }
     Some(s)
@@ -210,7 +212,7 @@ pub fn start(workspace_root: &str, job: &Job) -> Result<bool, String> {
 /// Marking our own stdio handles non-inheritable keeps the detached worker from holding a caller's
 /// pipe open after we exit.
 #[cfg(windows)]
-pub(super) fn no_inherit_std_handles() {
+pub(crate) fn no_inherit_std_handles() {
     use std::ffi::c_void;
     #[link(name = "kernel32")]
     extern "system" {
@@ -230,10 +232,10 @@ pub(super) fn no_inherit_std_handles() {
 }
 
 #[cfg(not(windows))]
-pub(super) fn no_inherit_std_handles() {}
+pub(crate) fn no_inherit_std_handles() {}
 
 #[cfg(windows)]
-pub(super) fn detach(cmd: &mut Command, breakaway: bool) {
+pub(crate) fn detach(cmd: &mut Command, breakaway: bool) {
     use std::os::windows::process::CommandExt;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -246,7 +248,7 @@ pub(super) fn detach(cmd: &mut Command, breakaway: bool) {
 }
 
 #[cfg(unix)]
-pub(super) fn detach(cmd: &mut Command, _breakaway: bool) {
+pub(crate) fn detach(cmd: &mut Command, _breakaway: bool) {
     use std::os::unix::process::CommandExt;
     cmd.process_group(0);
 }
@@ -314,11 +316,11 @@ pub fn render(s: &Status) -> String {
     } else if s.warnings > 0 {
         line.push_str(&format!(" - {} warning(s)", s.warnings));
     }
-    let (word, log) = if s.stack == release_web::STACK { ("RELEASE", release_web::RELEASE_LOG) } else { ("BUILD", build_log::BUILD_LOG) };
+    let (word, log) = if s.stack == release_web::STACK { ("RELEASE", release_web::RELEASE_LOG) } else { ("BUILD", log::BUILD_LOG) };
     format!(
         "{}\nlog: {}/{}\ncheck: mysid build status   cancel: mysid build stop",
         line.replacen("BUILD", word, 1),
-        build_log::MYSID_DIR,
+        log::MYSID_DIR,
         log
     )
 }
@@ -353,7 +355,7 @@ pub fn run_worker(workspace_root: &str) {
     let Some(job) = fs::read_to_string(dir.join(JOB_FILE)).ok().and_then(|t| serde_json::from_str::<Job>(&t).ok()) else {
         return;
     };
-    let log_path = dir.join(build_log::BUILD_LOG);
+    let log_path = dir.join(log::BUILD_LOG);
     let started = Instant::now();
     let started_ms = now_ms();
 
@@ -431,11 +433,11 @@ pub fn run_worker(workspace_root: &str) {
         finished.store(true, Ordering::Relaxed);
         let _ = heartbeat.join();
         let mut fin = status.lock().unwrap().clone();
-        build_gradle::close_stage(&mut fin, now_ms());
+        gradle::close_stage(&mut fin, now_ms());
         fin.state = if ok { "ok" } else { "failed" }.to_string();
         fin.updated_ms = now_ms();
         fin.exit_code = exit_code;
-        fin.summary = format!("{}\nlog: {}/{}", report, build_log::MYSID_DIR, release_web::RELEASE_LOG);
+        fin.summary = format!("{}\nlog: {}/{}", report, log::MYSID_DIR, release_web::RELEASE_LOG);
         write_status(&dir, &fin);
         return;
     }
@@ -446,7 +448,7 @@ pub fn run_worker(workspace_root: &str) {
         Arc::new(move |line: &str| {
             let mut s = status.lock().unwrap();
             match kind {
-                Kind::Gradle | Kind::GradleRelease => build_gradle::track(&mut s, line),
+                Kind::Gradle | Kind::GradleRelease => gradle::track(&mut s, line),
                 Kind::Rust => build_rust::track(&mut s, line),
                 Kind::WebRelease | Kind::Other => {
                     let t = line.trim();
@@ -473,7 +475,7 @@ pub fn run_worker(workspace_root: &str) {
         if s.bump_to > 0 { format!(" (versionCode {} -> {})", s.bump_from, s.bump_to) } else { String::new() }
     };
     let title = format!("mysid build [{}]{} {} {}", job.stack, bump_title, job.program, job.args.join(" "));
-    let result = build_log::run_logged(cmd, &log_path, &title, on_line);
+    let result = log::run_logged(cmd, &log_path, &title, on_line);
 
     // After a successful release build: check the bundle itself (still under the heartbeat, so the
     // status stays fresh while jarsigner runs).
@@ -495,9 +497,9 @@ pub fn run_worker(workspace_root: &str) {
     let _ = heartbeat.join();
 
     let elapsed = started.elapsed();
-    let log_line = format!("log: {}/{}", build_log::MYSID_DIR, build_log::BUILD_LOG);
+    let log_line = format!("log: {}/{}", log::MYSID_DIR, log::BUILD_LOG);
     let mut final_status = status.lock().unwrap().clone();
-    build_gradle::close_stage(&mut final_status, now_ms());
+    gradle::close_stage(&mut final_status, now_ms());
     let (ok, exit_code, report) = match result {
         Ok(run) => {
             let ok = run.status.success();
@@ -506,7 +508,7 @@ pub fn run_worker(workspace_root: &str) {
                 Kind::Gradle | Kind::GradleRelease => {
                     let combined = format!("{}\n{}", run.stdout, run.stderr);
                     let release = job.kind == Kind::GradleRelease;
-                    build_gradle::summarize(&combined, ok, elapsed, &final_status, workspace_root, started_ms, release)
+                    gradle::summarize(&combined, ok, elapsed, &final_status, workspace_root, started_ms, release)
                 }
                 Kind::WebRelease | Kind::Other => summarize_other(&job.stack, &run.stdout, &run.stderr, ok, elapsed),
             };

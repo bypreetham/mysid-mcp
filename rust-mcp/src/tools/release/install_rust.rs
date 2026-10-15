@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-use super::build_rust;
+use crate::tools::build_rust;
 
 /// The binary name: `[[bin]] name`, else `[package] name`.
 fn bin_name(manifest: &str) -> Option<String> {

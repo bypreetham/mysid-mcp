@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
 
-use super::workspace::{resolve_root, resolve_file_in_workspace};
+use crate::tools::workspace::{resolve_root, resolve_file_in_workspace};
 use crate::adapters::detect_adapter;
 
 pub fn execute_symbols(params: &Value, default_root: Option<&str>) -> String {

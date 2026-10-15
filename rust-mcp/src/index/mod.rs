@@ -84,7 +84,7 @@ impl Index {
     /// Never fails: if `.mysid/index.db` is unusable it is rebuilt, and as a last resort the
     /// index lives in memory for this run.
     pub fn open(root: &Path) -> Index {
-        if let Ok(dir) = crate::tools::build_log::ensure_dir(root) {
+        if let Ok(dir) = crate::tools::build::log::ensure_dir(root) {
             let path = dir.join(DB_FILE);
             for attempt in 0..2 {
                 if let Ok(db) = Db::open(&path) {
@@ -219,7 +219,7 @@ impl Index {
     /// Opens the index WITHOUT walking the workspace: for callers that refresh just what they need
     /// (`refresh_paths`) and would otherwise pay for a whole-tree walk on every call.
     pub fn open_lazy(root: &Path) -> Index {
-        if let Ok(dir) = crate::tools::build_log::ensure_dir(root) {
+        if let Ok(dir) = crate::tools::build::log::ensure_dir(root) {
             if let Ok(db) = Db::open(&dir.join(DB_FILE)) {
                 return Index { db };
             }

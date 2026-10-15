@@ -16,10 +16,10 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use super::android::adb::resolve_adb_binary;
-use super::build_log;
-use super::build_worker::{detach, fmt_secs, no_inherit_std_handles, now_ms};
-use super::workspace::resolve_existing_root;
+use crate::tools::android::adb::resolve_adb_binary;
+use super::log;
+use super::worker::{detach, fmt_secs, no_inherit_std_handles, now_ms};
+use crate::tools::workspace::resolve_existing_root;
 
 const LOG_FILE: &str = "debug.log";
 const JOB_FILE: &str = "debug.job.json";
@@ -74,7 +74,7 @@ fn window_secs(params: &Value) -> (u64, u64) {
 }
 
 fn dir_of(ws: &str) -> PathBuf {
-    build_log::ensure_dir(Path::new(ws)).unwrap_or_else(|_| {
+    log::ensure_dir(Path::new(ws)).unwrap_or_else(|_| {
         let d = std::env::temp_dir().join("mysid");
         let _ = fs::create_dir_all(&d);
         d
@@ -565,7 +565,7 @@ fn cmd_raw(ws: &str, query: &str, params: &Value) -> String {
         device_lines,
         total_hits,
         blocks.len(),
-        build_log::MYSID_DIR,
+        log::MYSID_DIR,
         LOG_FILE,
         human(file.len() as u64),
         h.join(", ")
@@ -607,7 +607,7 @@ fn cmd_stop(ws: &str) -> String {
     }
     kill_tree(s.pid);
     let _ = fs::remove_file(dir.join(STATE_FILE));
-    format!("Recorder stopped. Log kept: {}/{} ({})", build_log::MYSID_DIR, LOG_FILE, human(size_of(&dir.join(LOG_FILE))))
+    format!("Recorder stopped. Log kept: {}/{} ({})", log::MYSID_DIR, LOG_FILE, human(size_of(&dir.join(LOG_FILE))))
 }
 
 fn cmd_clear(ws: &str) -> String {
@@ -628,7 +628,7 @@ fn status_line(dir: &Path) -> String {
     } else {
         "recorder NOT running".to_string()
     };
-    format!("{}; log {}/{} {}", state, build_log::MYSID_DIR, LOG_FILE, human(size_of(&dir.join(LOG_FILE))))
+    format!("{}; log {}/{} {}", state, log::MYSID_DIR, LOG_FILE, human(size_of(&dir.join(LOG_FILE))))
 }
 
 fn cmd_record_or_show(ws: &str, query: &str, params: &Value) -> String {
@@ -712,7 +712,7 @@ fn cmd_record_or_show(ws: &str, query: &str, params: &Value) -> String {
     let state = read_state(&dir);
     let mut out = if let (true, Some((asked, secs))) = (state.done, window) {
         let note = if asked != secs { format!(" (asked {}s, allowed {}-{}s)", asked, WINDOW_MIN_SECS, WINDOW_MAX_SECS) } else { String::new() };
-        format!("{} sec log record done{} - {} line(s) saved to {}/{}\n", secs, note, state.saved, build_log::MYSID_DIR, LOG_FILE)
+        format!("{} sec log record done{} - {} line(s) saved to {}/{}\n", secs, note, state.saved, log::MYSID_DIR, LOG_FILE)
     } else {
         format!("DEBUG {}\n", status_line(&dir))
     };
@@ -739,7 +739,7 @@ fn cmd_record_or_show(ws: &str, query: &str, params: &Value) -> String {
         }
         out.push('\n');
     }
-    out.push_str(&format!("log: {}/{}   again: mysid debug (show) | mysid debug \"kw, kw\" (record a new window)", build_log::MYSID_DIR, LOG_FILE));
+    out.push_str(&format!("log: {}/{}   again: mysid debug (show) | mysid debug \"kw, kw\" (record a new window)", log::MYSID_DIR, LOG_FILE));
     out
 }
 

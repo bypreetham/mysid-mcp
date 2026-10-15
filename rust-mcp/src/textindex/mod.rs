@@ -22,7 +22,7 @@ use std::sync::Mutex;
 use std::time::{Duration, UNIX_EPOCH};
 
 use crate::adapters::detect_adapter;
-use crate::tools::build_log;
+use crate::tools::build::log;
 
 const DB_FILE: &str = "text.db";
 const SCHEMA_VERSION: i32 = 1;
@@ -221,7 +221,7 @@ pub fn build_bloom(buf: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn open(root: &Path) -> rusqlite::Result<Connection> {
-    let dir = build_log::ensure_dir(root).map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
+    let dir = log::ensure_dir(root).map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
     let conn = Connection::open(dir.join(DB_FILE))?;
     conn.busy_timeout(Duration::from_secs(5))?;
     conn.execute_batch("PRAGMA synchronous = NORMAL;")?;

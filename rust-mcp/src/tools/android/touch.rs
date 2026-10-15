@@ -302,7 +302,7 @@ pub(super) fn now_ms() -> u128 {
 }
 
 pub(super) fn log_touch(ctx: &Ctx, line: &str) {
-    if let Ok(dir) = super::super::build_log::ensure_dir(&ctx.ws) {
+    if let Ok(dir) = crate::tools::build::log::ensure_dir(&ctx.ws) {
         if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(dir.join("touch.log")) {
             let _ = writeln!(f, "{} {}", now_ms(), line);
         }
@@ -312,7 +312,7 @@ pub(super) fn log_touch(ctx: &Ctx, line: &str) {
 /// Saves the shot (last 20 kept), queues it for MCP, logs it, and returns the one-line mapping.
 pub(super) fn publish(ctx: &Ctx, shot: &Shot, head: &str) -> String {
     let mut saved = String::new();
-    if let Ok(dir) = super::super::build_log::ensure_dir(&ctx.ws) {
+    if let Ok(dir) = crate::tools::build::log::ensure_dir(&ctx.ws) {
         let shots = dir.join("shots");
         let _ = fs::create_dir_all(&shots);
         let path = shots.join(format!("{}.png", now_ms()));

@@ -2,7 +2,7 @@ use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
-use super::workspace::{resolve_file_in_workspace, resolve_root};
+use crate::tools::workspace::{resolve_file_in_workspace, resolve_root};
 use crate::index::{Index, Located, SymbolId, SymbolKind};
 use crate::parsers::{find_parser, is_supported_extension};
 
@@ -111,7 +111,7 @@ pub fn execute_read(params: &Value, default_root: Option<&str>) -> String {
                 return symbol_result;
             }
             // Several files share the name: list them (with the shortest folder that tells them apart), not "not found".
-            let message = super::workspace::resolution_message(&resolve_err);
+            let message = crate::tools::workspace::resolution_message(&resolve_err);
             if message.contains("ambiguous") {
                 return format!("ERROR: {}", message);
             }

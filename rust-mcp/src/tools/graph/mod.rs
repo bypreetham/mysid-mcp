@@ -295,7 +295,7 @@ mod map_tests {
         assert!(!map.lines().any(|l| l.trim_start().starts_with("app/  ")), "should not stop at app/: {}", map);
 
         // `read <folder>` says what to use for a folder instead of printing something that looks like a file
-        let read = crate::tools::read::execute_read(&json!({ "workspace_root": root, "project_path": root, "path": "app" }), Some(&root));
+        let read = crate::tools::scanner::read::execute_read(&json!({ "workspace_root": root, "project_path": root, "path": "app" }), Some(&root));
         assert!(read.starts_with("ERROR: 'app' is a folder, not a file") && read.contains("mysid list app"), "{}", read);
         let _ = fs::remove_dir_all(&dir);
     }

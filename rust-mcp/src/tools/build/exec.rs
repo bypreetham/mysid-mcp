@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::workspace::resolve_existing_root;
+use crate::tools::workspace::resolve_existing_root;
 
 const MAX_OUTPUT_BYTES: usize = 32_768;
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
@@ -281,7 +281,7 @@ pub fn execute_exec(params: &Value, default_root: Option<&str>) -> String {
     let shell_choice = params.get("shell").and_then(|v| v.as_str()).or(if toolchain.is_some() && cfg!(windows) { Some("cmd") } else { None });
     // `gradlew clean` on a moved project fails minutes in on caches that name the old folder: refuse with the fix.
     if command.contains("gradlew") && !command.contains("--stop") {
-        if let Some(answer) = super::stale::guard(Path::new(&workspace_root), params) {
+        if let Some(answer) = crate::tools::stale::guard(Path::new(&workspace_root), params) {
             let msg = serde_json::from_str::<Value>(&answer).ok().and_then(|v| v.get("error").and_then(|e| e.as_str()).map(String::from)).unwrap_or(answer);
             return json!({ "success": false, "output": msg }).to_string();
         }
@@ -294,7 +294,7 @@ pub fn execute_exec(params: &Value, default_root: Option<&str>) -> String {
     // Rust installed through rustup keeps cargo in the toolchain folder; when `cargo` is not on PATH (nothing in ~/.cargo/bin),
     // add that folder at the END of PATH so `cargo test` / `rustc` work like `mysid build` does.
     if !on_path("cargo") {
-        let found = super::build_rust::find_cargo();
+        let found = crate::tools::build_rust::find_cargo();
         if let Some(dir) = Path::new(&found).parent().filter(|d| d.is_dir() && !d.as_os_str().is_empty()) {
             let sep = if cfg!(windows) { ";" } else { ":" };
             let path = std::env::var("PATH").unwrap_or_default();

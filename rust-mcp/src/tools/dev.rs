@@ -16,7 +16,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::workspace::resolve_existing_root;
-use super::{build_log, build_worker};
+use super::build::{log, worker};
 
 const STATE_FILE: &str = "dev.state.json";
 const LOG_FILE: &str = "dev.log";
@@ -46,7 +46,7 @@ fn now_ms() -> u64 {
 }
 
 fn dir_of(root: &str) -> PathBuf {
-    build_log::ensure_dir(Path::new(root)).unwrap_or_else(|_| {
+    log::ensure_dir(Path::new(root)).unwrap_or_else(|_| {
         let d = std::env::temp_dir().join("mysid");
         let _ = fs::create_dir_all(&d);
         d
@@ -126,7 +126,7 @@ fn error_lines(lines: &[String], max: usize) -> Vec<String> {
 }
 
 fn fmt_secs(ms: u64) -> String {
-    build_worker::fmt_secs(ms / 1000)
+    worker::fmt_secs(ms / 1000)
 }
 
 fn package_manager(root: &Path) -> &'static str {
@@ -183,7 +183,7 @@ fn start(root: &str, params: &Value) -> String {
         Err(e) => return text(false, &format!("DEV NOT STARTED: {}", e)),
     };
 
-    build_worker::no_inherit_std_handles();
+    worker::no_inherit_std_handles();
     let spawn = |breakaway: bool| {
         #[cfg(windows)]
         let mut cmd = {
@@ -205,7 +205,7 @@ fn start(root: &str, params: &Value) -> String {
             .stdin(Stdio::null())
             .stdout(Stdio::from(log.try_clone().unwrap()))
             .stderr(Stdio::from(err_log.try_clone().unwrap()));
-        build_worker::detach(&mut cmd, breakaway);
+        worker::detach(&mut cmd, breakaway);
         cmd.spawn()
     };
     let child = match spawn(true).or_else(|_| spawn(false)) {
