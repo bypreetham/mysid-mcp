@@ -297,6 +297,21 @@ pub(crate) fn get_mcp_tools_list() -> Value {
             "inputSchema": { "type": "object", "properties": { "wait": { "type": "integer", "description": "Seconds to wait before returning a progress line (default 20)" } } }
         },
         {
+            "name": "convert",
+            "description": "Convert a React + TypeScript + Tailwind project into a Flutter project: replaces <dest>/lib with Dart pages, components, hooks, utils, services and models (same folder structure, snake_case file names). Interfaces become classes, useState/useEffect become State, JSX + Tailwind classes become widgets, react-router becomes named routes. The old lib is backed up in <dest>/.mysid. dry_run only reports.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "source": { "type": "string", "description": "The React project folder (the one with package.json and src/)" },
+                    "dest": { "type": "string", "description": "The Flutter project folder (has pubspec.yaml); its lib/ is replaced" },
+                    "dry_run": { "type": "boolean", "description": "Convert and report, write nothing" },
+                    "analyze": { "type": "boolean", "description": "Run `dart analyze lib` on the result" },
+                    "notes": { "type": "boolean", "description": "List every construct that needed a stand-in" }
+                },
+                "required": ["source", "dest"]
+            }
+        },
+        {
             "name": "debug",
             "description": "Android device log recorder. query 'Buffer, router, usb' clears the device logcat, records only lines whose tag or text contains a keyword into .mysid/debug.log for a fixed window (seconds, default 20, 10-60) while the user reproduces the issue, then returns '20 sec log record done' with the lines (repeats collapsed). Call with no query to read the last recording again. Also 'status', 'stop', 'clear'.",
             "inputSchema": {
@@ -306,6 +321,7 @@ pub(crate) fn get_mcp_tools_list() -> Value {
                     "new": { "type": "boolean", "description": "Only lines recorded since the previous debug call" },
                     "raw": { "type": "boolean", "description": "Raw mode: clear logcat, capture the WHOLE device log (all buffers, system dump) for `seconds`, keep lines containing the query terms with 3 lines above and below, save to .mysid/debug.log. Use for system/framework errors not logged by the app's own tags." },
                     "seconds": { "type": "integer", "description": "Recording window in seconds, 10-60 (default 20). The call waits for the window, then reports 'N sec log record done'." },
+                    "do": { "type": "string", "description": "Steps to run on the device WHILE recording, separated by ';' (same words as a scenario step): \"goto 'Equalizer'; key back; wait 500\". One call reproduces the issue and captures the log. Needs a query." },
                     "level": { "type": "string", "description": "Minimum level to show: V D I W E" },
                     "lines": { "type": "integer", "description": "Maximum lines to show (default 60)" }
                 }

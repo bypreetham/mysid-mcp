@@ -8,6 +8,7 @@ pub mod touch;
 
 // Parts of the touch tooling (D-pad focus, scripted scenarios) that build on its helpers.
 mod focus;
+mod remember;
 mod scenario;
 
 use serde::Deserialize;
@@ -37,6 +38,11 @@ pub struct AndroidParams {
     pub keycode: Option<String>,
     #[serde(default)]
     pub activity_name: Option<String>,
+}
+
+/// `mysid debug ... --do "goto X; key back"`: runs the steps while the log is being recorded.
+pub fn run_do(ws: Option<&Path>, spec: &str) -> String {
+    scenario::run_lines(ws, &scenario::split_steps(spec))
 }
 
 pub fn execute_android(params: &Value, default_root: Option<&str>) -> String {

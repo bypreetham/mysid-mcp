@@ -169,7 +169,10 @@ pub fn overview() -> String {
         let aliases = if c.aliases.is_empty() { String::new() } else { format!(" (also: {})", c.aliases.join(", ")) };
         lines.push(format!("  mysid {:<11} {}{}", c.name, c.summary, aliases));
     }
-    lines.push("each command's answer ends with a next: line when the repository state suggests one (flow.rs)".to_string());
+    lines.push(String::new());
+    lines.push("safe loop:  mysid checkpoint \"label\"  ->  edits  ->  mysid build  ->  mysid diff  ->  mysid commit --message \"...\"".to_string());
+    lines.push("            not happy: mysid restore (preview), then mysid restore --yes".to_string());
+    lines.push("each command's answer ends with a next: line when the repository state suggests one. One command in detail: mysid help <command>".to_string());
     lines.join("\n")
 }
 

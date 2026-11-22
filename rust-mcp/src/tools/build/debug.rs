@@ -408,6 +408,9 @@ Usage:
                                         (case-insensitive) into .mysid/debug.log for 20 s, then print
                                         \"20 sec log record done\" and the result - reproduce the issue meanwhile
     mysid debug usb --seconds 40        a different window: 10-60 s (also: -40)
+    mysid debug usb --do \"goto 'Equalizer'; key back\"
+                                        run these steps (the same words as a scenario step: goto, key, wait, expect) while recording,
+                                        so one call reproduces the issue and captures its log; a failing step stops the rest
     mysid debug error --raw 20          raw mode: capture the WHOLE device log (all buffers, system dump included)
                                         for 20 s, keep lines containing a term plus 3 lines above and below
     mysid debug                         show the last recording again (last 60 lines)
@@ -640,6 +643,7 @@ fn cmd_record_or_show(ws: &str, query: &str, params: &Value) -> String {
     // caller gets the result in one call. Without keywords the saved recording is shown again.
     let mut started_now = false;
     let mut window: Option<(u64, u64)> = None;
+    let mut actions: Option<String> = None;
     if !keywords.is_empty() {
         let running = alive(&read_state(&dir));
         let (asked, secs) = window_secs(params);
@@ -650,6 +654,19 @@ fn cmd_record_or_show(ws: &str, query: &str, params: &Value) -> String {
             started_now = true;
         }
         window = Some((asked, secs));
+        // `--do "goto X; key back"`: the key presses run now, while the recorder is writing, so one call reproduces and captures.
+        if let Some(spec) = params.get("do").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
+            eprintln!("running while recording: {}", spec);
+            let t0 = std::time::Instant::now();
+            let r = crate::tools::android::run_do(Some(Path::new(ws)), spec);
+            let took = t0.elapsed().as_secs();
+            actions = Some(format!(
+                "actions ({} s, while recording):\n{}\n{}",
+                took,
+                r,
+                if took >= secs { "note: the actions took longer than the recording window; use --seconds N (10-60) for a longer one\n" } else { "" }
+            ));
+        }
         eprintln!("recording {}s, filter [{}] - reproduce the issue now...", secs, keywords.join(", "));
         let limit = std::time::Instant::now() + Duration::from_secs(secs + 5);
         while std::time::Instant::now() < limit && alive(&read_state(&dir)) {
@@ -716,6 +733,9 @@ fn cmd_record_or_show(ws: &str, query: &str, params: &Value) -> String {
     } else {
         format!("DEBUG {}\n", status_line(&dir))
     };
+    if let Some(a) = &actions {
+        out.push_str(a);
+    }
     if started_now && state.saved == 0 && !state.note.is_empty() && state.note != "recording" {
         out.push_str(&format!("recorder: {}\n", state.note));
     }

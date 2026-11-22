@@ -3,6 +3,8 @@
 pub mod cleaner;
 pub mod compare;
 pub mod health;
+#[cfg(feature = "treesitter")]
+pub mod tsparse;
 
 use serde_json::{json, Value};
 
@@ -26,6 +28,10 @@ pub fn execute_doctor(params: &Value, default_root: Option<&str>) -> String {
         "compare" | "diff" | "cmp" => compare::run(params, default_root),
         "health" => health::run(params, default_root),
         "clean" => cleaner::run(params, default_root),
+        #[cfg(feature = "treesitter")]
+        "tsdump" => tsparse::dump(params, default_root),
+        #[cfg(feature = "treesitter")]
+        "tscompare" => tsparse::compare(params, default_root),
         "" | "help" => json!({ "success": true, "output": HELP }).to_string(),
         other => json!({ "success": false, "error": format!("unknown doctor check '{}'. Available: compare, health, clean. (mysid doctor compare <old> <new>, mysid health <folder>, mysid clean <folder>)", other) }).to_string(),
     }

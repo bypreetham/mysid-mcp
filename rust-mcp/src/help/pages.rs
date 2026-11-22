@@ -5,10 +5,13 @@ use crate::tools;
 pub(crate) fn get_tool_help(tool: &str) -> Option<&'static str> {
     match tool.to_ascii_lowercase().trim_start_matches('-') {
         "remaining" | "rest" | "more" => Some(get_remaining_help()),
+        "vcs" | "versioncontrol" => Some(get_vcs_help()),
         "symbols" => Some("mysid symbols: the symbols of one file, one per line\n\nUsage:\n  mysid symbols <file>      [KIND] name line N, for every class, function and method (file name only: Foo.kt)\n\nCheaper than mysid overview when only the names and line numbers matter; overview adds signatures and parameters.\n"),
         "all" | "full" | "commands" => Some(get_full_help()),
         "replace" => Some(
-            "mysid replace: Global search-and-replace refactoring\n\n\
+            "mysid replace: project-wide rename (changes EVERY file that contains the text)\n\n\
+WARNING: without a file, this edits the whole project. To change code in ONE file use mysid patch (exact text) or\n  \
+  mysid edit (line numbers). Use replace only for a rename/refactor that must reach every file, and run --dry-run first.\n\n\
 Description:\n  \
   Replaces occurrences of a string across the entire workspace, or within a specific file.\n  \
   Automatically skips binary files, respects .gitignore, and preserves line endings.\n\n\
@@ -203,6 +206,7 @@ Examples:\n  \
   mysid install\n"
         ),
         "debug" => Some(tools::build::debug::HELP),
+        "convert" => Some(get_convert_help()),
         "dev" => Some(tools::dev::HELP),
         "test" => Some(tools::test_run::HELP),
         "status" => Some("mysid status: what changed, in git terms\n\nUsage:\n  mysid status     branch, upstream (ahead/behind), changed files (staged / unstaged / untracked), last commit\n  mysid branch     local branches with their last commit\n\nRead only. Secret-looking files are marked: mysid commit leaves them out.\n"),
@@ -306,7 +310,7 @@ Usage:
 Numbers are the ones mysid read shows (Foo.kt#L121-220). Use --expect when the file may have changed since you read it: the
 edit then stops with NOT EDITED instead of changing the wrong lines. The answer lists the removed (-) and added (+) lines and
 the new line numbers. All or nothing; CRLF files stay CRLF. Choose by what you know: the exact old text -> mysid patch; the line
-numbers -> mysid edit; the same change in many places -> mysid replace.
+numbers -> mysid edit; a rename that must reach every file of the project -> mysid replace (--dry-run first).
 "
         ),
         "append" => Some(
@@ -420,11 +424,18 @@ extra capture), the foreground app, and the workspace. `--app <package>` refuses
 `--expect \"text\"` waits for that text to appear (--timeout ms, default 5000) instead of a fixed wait. In a batch, a step stops\n\
 the run when its expectation fails, when it errors, or with \"require_change\": true when the screen did not change.\n\
 Options: --device <serial> (when several), --scale <0.1-1>, --wait <ms>, --grid, --space image. Every adb call times out after 10 s.\n\
-TV / no touch: a key press waits until the screen stops changing (two equal captures; --settle-timeout ms, default 2000)\n\
-instead of a fixed 600 ms, unless --wait is given. `keyevent dpad_right --no-shot` answers with text only: the result and the\n\
+TV / no touch: a key press waits until FOCUS settles (animations do not count; --settle-timeout ms, default 2000; a D-pad key\n\
+needs one read, OK/back/home two; --strict forces two, --pixels compares screenshots instead) instead of a fixed 600 ms, unless\n\
+--wait is given. `--times n` is always ONE adb call (an adb key call costs ~1.4 s on a TV). `keyevent dpad_right --no-shot` answers with text only: the result and the\n\
 focus line (`focus: \"Play all\" [Button] center (x,y) bounds ... path: A > B`); `--focus` adds that line to a screenshot answer.\n\
-`goto` reads the accessibility tree before every press, picks the key towards the target, and stops with a reason when focus\n\
-does not move, jumps the wrong way, loops, or the target never appears (then with a screenshot). Also usable as a batch step.\n\
+`goto` reads the accessibility tree before every press and picks the key: when the target is outside the row or column that holds\n\
+focus it first leaves it (DOWN from a tab row), then goes sideways; presses along one row go in ONE adb call. A press that moves\n\
+nothing is repeated once, then the next key is tried; it stops with a reason when all four keys do nothing (a focus trap), focus\n\
+jumps the wrong way, loops, or the target never appears (then with a screenshot). A focused row is named by ALL its text\n\
+(`2 | ab_short | 0:42`), and any of it matches. Also usable as a batch step.\n\
+Device: `devices` answers within 5 s; the last Wi-Fi device is remembered, and when it is gone `devices` / `wifi` retry its address,\n\
+then scan its subnet for the same model (a TV that got a new IP). A sleeping screen is woken; a locked one is reported as locked.\n\
+`mysid debug \"kw\" --do \"goto X; key back\"` runs those steps while recording the log.\n\
 scenario file: {\"app\":\"com.x.tv\",\"steps\":[\"launch --cold\",\"goto 'USB Drive'\",\"expect text 'Play all'\",\"expect focus 'Play all'\"]}\n\
   steps: launch [--cold] [pkg] | key <k> [--times n] | goto <labels> | tap, swipe, type, scroll, wait ... | expect text|focus|gone|app <v> [--timeout ms]\n\
   Report: PASS/FAIL per step (a screenshot of the first failure only), cold start (am start -W), janky frames (gfxinfo), and every\n\

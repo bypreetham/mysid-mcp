@@ -57,21 +57,24 @@ pub(crate) fn get_root_help() -> &'static str {
 
    1. mysid set .                      pick the project; prints its source root, language, entry and the folders to look at
    2. mysid list <folder>              what is in a folder: sub-folders ranked by code, code files with line counts
-   3. mysid overview <file.ext>        classes, functions and signatures with line numbers (no code)
-   4. mysid read <file.ext>#L10-60     the code snippet (a SymbolName instead of a file works too)
+   3. mysid overview <file.ext>        classes, functions and signatures with line numbers (no code). START HERE, not with read: overview + graph together find the right code
+                                       without reading whole files. overview = what a file holds; graph <symbol> = who calls it and what it calls, so you can jump to the
+                                       related files and read only those functions
+   4. mysid read <file.ext>#L10-60     the code snippet (a SymbolName instead of a file works too). Only after overview/graph pointed at it; read the slice, not the whole file
    5. mysid search "text" [--types kt,ts] [--regex] [--context 1] [--group] [--count] [--max N] [--offset N]
                                        where is it? Shows 15 hits; if cut, the last line gives the --offset N for the next page (--max N shows more). --count = matches per file; --all also searches md/txt
    6. mysid graph <symbol> [--depth N]   callers and callees; --depth N = N hops (max 5, default 1); a file name: what it calls and who calls it
    7. change code, any of three:
         mysid patch <file> --stdin [--show]   exact old text. ALWAYS give code via --stdin (old text, a line with only =======, new text) or --old-file a --new-file b: quotes, $ and backslashes then never matter. --show = also print the removed (-) and added (+) lines, so you need not re-read the file
         mysid edit <file>#L10-20 "new text"   you know the line numbers (from read) [--insert-after | --insert-before | --delete | --expect "text"]
-        mysid replace "old" "new"             the same change in many places        [--dry-run first]
+        mysid replace "old" "new"             PROJECT-WIDE rename: edits EVERY file containing the text. Not for changing one file (use patch). [ALWAYS --dry-run first]
    8. mysid patch_batch <file> --stdin [--show]   several replacements in ONE file, all or nothing: repeat <<<<<<< SEARCH / old text / ======= / new text / >>>>>>> REPLACE on stdin
    9. mysid file new dir/sub-dir/file.ext --stdin   create a new file, content on stdin (folders are made). If the file exists it stops with "already exists": add --overwrite to replace it
   10. mysid build                      build; errors only (the full log is .mysid/build.log)
   11. mysid get_workspace              CONTINUING earlier work? Run this first: which project this folder uses, and why (then set . if it is the wrong one)
 
 Flow: (continuing earlier work: get_workspace) set . -> list <folder> -> overview <file> -> read <file>#L10-60 -> search "text" -> graph <symbol> -> patch | edit | replace | patch_batch | file new -> build.
+Save tokens: pass 1 = overview (or search) to find the relevant function; pass 2 = graph <symbol> for its callers/callees; pass 3 = read only those slices. Read a whole file only when the slices are not enough.
 One command in detail: mysid help <command>.   The other commands: mysid help remaining.
 "#
 }
@@ -97,19 +100,13 @@ THE USUAL FLOW
   14. mysid skill base                 stack unknown: the general workflow
   15. mysid file <action>              more file commands: new, copy, rename, delete, mkdir, list  ('file --help')
 
-SAFE EDITING
-  mysid checkpoint "label"  ->  edits  ->  mysid build  ->  mysid diff  ->  mysid commit "message"
-  not happy: mysid restore (preview) / mysid restore --yes.   mysid history = the last commits.
+VERSION CONTROL
+  mysid vcs help                       bootstrap, commit, status, branch, history, publish, checkpoint, diff, restore, git: one page
 
 MORE
   mysid replace <old> <new>            search-and-replace across files  [--types] [--dry-run]
   mysid patch_batch --json <file>      atomic multi-file patches
   mysid test [name]                    run the tests: one line when green, failing tests with messages when not
-  mysid bootstrap                      git init only (nothing staged or committed); --gitignore writes a .gitignore for the stack
-  mysid vcs                            the version-control workflow: bootstrap -> .gitignore -> commit -> status -> publish
-  mysid git purge  (or: mysid purge)   remove git from the project (preview; --yes does it; irreversible, ask the owner)
-  mysid status                         git: branch, ahead/behind, changed files   (mysid branch lists branches)
-  mysid publish <repo-url>             first upload to GitHub: shows the plan; add --yes to push (ask the owner first)
   mysid copy <src>... <dest>           copy files or folders (no overwrite unless --overwrite)
   Any command takes --head N, --tail N, --grep <regex>, --grep-v <regex> to trim its output
   mysid dev                            start the dev server in the background, get its URL; dev log | status | stop
@@ -154,6 +151,18 @@ Files are named by name only (Foo.kt); add a folder (ui/Foo.kt) only if two file
 pub(crate) const UTILITY_COMMANDS: &[&str] = &["tree", "symbols"];
 
 /// One line per command that is not in the short help: its name and the first line of its own help page.
+/// `mysid help convert`: the usage and the registered converters.
+pub(crate) fn get_convert_help() -> &'static str {
+    static TEXT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    TEXT.get_or_init(crate::tools::convert::overview)
+}
+
+/// `mysid help vcs` / `mysid vcs help`: the version-control page, from the registry in tools/vcs.
+pub(crate) fn get_vcs_help() -> &'static str {
+    static TEXT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    TEXT.get_or_init(crate::tools::vcs::overview)
+}
+
 pub(crate) fn get_remaining_help() -> &'static str {
     static TEXT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     TEXT.get_or_init(|| {
@@ -161,7 +170,14 @@ pub(crate) fn get_remaining_help() -> &'static str {
         let mut seen: Vec<&'static str> = Vec::new();
         let mut without_page: Vec<&str> = Vec::new();
         for name in KNOWN_COMMANDS {
-            if SHORT_HELP_COMMANDS.contains(name) || ANDROID_COMMANDS.contains(name) || FILE_COMMANDS.contains(name) || UTILITY_COMMANDS.contains(name) {
+            // Version control has its own page (`mysid vcs`), built from the registry: every name it answers to is left out here.
+            if SHORT_HELP_COMMANDS.contains(name)
+                || ANDROID_COMMANDS.contains(name)
+                || FILE_COMMANDS.contains(name)
+                || UTILITY_COMMANDS.contains(name)
+                || *name == "vcs"
+                || crate::tools::vcs::find(name).is_some()
+            {
                 continue;
             }
             match get_tool_help(name) {
@@ -182,6 +198,7 @@ pub(crate) fn get_remaining_help() -> &'static str {
             out.push_str(&format!("\nAlso accepted (aliases and small helpers): {}\n", without_page.join(", ")));
         }
         out.push_str("\nFile operations (new, write, append, mkdir, mv, cp, rm, ls): mysid file help\n");
+        out.push_str("Version control (bootstrap, commit, status, branch, history, publish, checkpoint, diff, restore, git): mysid vcs help\n");
         out.push_str("Android / device commands (devices, wifi, install, debug, release, goto, scenario, keyevent ...): mysid android help\n");
         out.push_str("\nOne command in detail: mysid help <command>.   The commands in the short list: mysid help.\n");
         out

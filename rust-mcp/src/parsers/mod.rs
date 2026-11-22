@@ -4,6 +4,8 @@ pub mod dart;
 pub mod go;
 pub mod java;
 pub mod kotlin;
+#[cfg(feature = "treesitter")]
+pub mod kotlin_ts;
 pub mod markdown;
 pub mod python;
 pub mod rust_lang;

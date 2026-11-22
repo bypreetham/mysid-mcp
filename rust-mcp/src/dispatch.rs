@@ -15,7 +15,7 @@ pub(crate) const KNOWN_COMMANDS: &[&str] = &[
     "read", "peek", "search", "graph", "patch", "patch_batch", "replace", "edit", "create_file", "write", "append",
     "list_dir", "ls", "dir", "listdir", "mkdir", "rename", "mv", "delete", "rm", "file", "exec", "run",
     "lint", "check", "symbols", "overview", "signatures", "build", "release", "aab", "install",
-    "apply", "list", "commit", "history", "checkpoint", "diff", "restore", "skill", "new", "debug", "dev", "deps", "test", "status", "branch", "copy", "cp", "publish", "bootstrap", "doctor", "health", "clean", "tree", "init", "vcs", "git", "purge", "msvc", "cl", "emsdk", "wasm", "android", "devices", "wifi", "connect_wifi", "inspect_symbol", "set", "set_workspace", "setworkspace",
+    "apply", "list", "commit", "history", "checkpoint", "diff", "restore", "skill", "new", "debug", "dev", "deps", "test", "status", "branch", "copy", "cp", "publish", "bootstrap", "doctor", "health", "clean", "tree", "init", "vcs", "git", "purge", "msvc", "cl", "emsdk", "wasm", "android", "convert", "devices", "wifi", "connect_wifi", "inspect_symbol", "set", "set_workspace", "setworkspace",
     "get_workspace", "getworkspace", "help",
 ];
 
@@ -193,6 +193,7 @@ chosen from: {}
         }
         "vcs" => json!({ "success": true, "output": tools::vcs::overview() }).to_string(),
         "copy" | "cp" => tools::file::execute_copy(params, default_root),
+        "convert" => tools::convert::execute_convert(params, default_root),
         "deps" => tools::deps::execute_deps(params, default_root),
         "doctor" => tools::doctor::execute_doctor(params, default_root),
         "clean" => {

@@ -1,5 +1,6 @@
 pub mod android;
 pub mod build;
+pub mod convert;
 pub mod deps;
 pub mod doctor;
 pub mod dev;

@@ -13,3 +13,9 @@ regex-syntax = "0.8"
 png = "0.17"
 ignore = "0.4"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+# Proof of concept (not in the release build): real syntax trees. cargo build --features treesitter
+tree-sitter = { version = "0.27", optional = true }
+tree-sitter-kotlin-ng = { version = "1.1", optional = true }
+
+[features]
+treesitter = ["dep:tree-sitter", "dep:tree-sitter-kotlin-ng"]

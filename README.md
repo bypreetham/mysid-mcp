@@ -111,6 +111,7 @@ File **names**, not paths (`Player.kt`). Output is capped and prints short names
 | Web release | `mysid release` in a React project: build, `netlify deploy --prod`, live `.mysid/release.log` | [web release](README/web-release.md) |
 | Dev server, deps | `mysid dev` (background server + URL + log), `mysid deps` (missing npm packages) | [dev and deps](README/dev-and-deps.md) |
 | Project doctor | `mysid doctor compare <old> <new>`: files, size, identical / changed / moved / one-sided, and whether the old folder can be deleted | [project doctor](README/project-doctor.md) |
+| Convert | `mysid convert <react-project> <flutter-project>`: a React + TypeScript + Tailwind project into a Flutter project (pages, components, hooks, utils, services, models), the old `lib` backed up | [convert](README/convert.md) |
 | Shell-free chores | `--head/--tail/--grep` on any command, `mysid test`, `mysid status`, `mysid copy` | [shell-free](README/shell-free.md) |
 | Projects | `mysid new react <name>` | [new project](README/new-project.md) |
 | Workspaces | one project per folder, per command, no shared state | [workspaces](README/workspaces.md) |

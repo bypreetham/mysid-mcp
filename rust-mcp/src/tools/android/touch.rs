@@ -17,7 +17,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use super::adb::resolve_adb_binary;
 use super::shot::{self, Image};
 
-use super::{focus, scenario};
+use super::{focus, remember, scenario};
 
 pub(super) const ADB_TIMEOUT: Duration = Duration::from_secs(10);
 pub(super) const DEFAULT_WAIT_MS: u64 = 600;
@@ -127,8 +127,10 @@ pub(super) fn adb(serial: Option<&str>, args: &[&str], timeout: Duration) -> Res
     })
 }
 
-pub(super) fn pick_device(p: &Value) -> Result<String, String> {
-    let o = adb(None, &["devices", "-l"], ADB_TIMEOUT)?;
+/// `adb devices -l` split into ready devices (serial, model) and the others ("serial (state)"). Waits 5 s at most: an
+/// unreachable Wi-Fi device must not hang every command for a minute.
+pub(super) fn list_devices() -> Result<(Vec<(String, String)>, Vec<String>), String> {
+    let o = adb(None, &["devices", "-l"], Duration::from_secs(5)).map_err(|e| format!("{}. If adb is stuck: mysid android restart_server", e))?;
     let listing = String::from_utf8_lossy(&o.stdout).to_string();
     let mut ready: Vec<(String, String)> = Vec::new();
     let mut other: Vec<String> = Vec::new();
@@ -142,6 +144,19 @@ pub(super) fn pick_device(p: &Value) -> Result<String, String> {
             other.push(format!("{} ({})", serial, state));
         }
     }
+    Ok((ready, other))
+}
+
+pub(super) fn pick_device(p: &Value) -> Result<String, String> {
+    let (mut ready, mut other) = list_devices()?;
+    let mut note = String::new();
+    // Nothing ready: the TV may only have a new address. Ask the remembered one, then scan its subnet.
+    if ready.is_empty() && text(p, &["device", "serial"]).is_none() {
+        if let Some(msg) = remember::reconnect() {
+            note = format!(" ({})", msg);
+            (ready, other) = list_devices()?;
+        }
+    }
     let show = |v: &[(String, String)]| v.iter().map(|(s, m)| format!("  {}  {}", s, m)).collect::<Vec<_>>().join("\n");
     if let Some(want) = text(p, &["device", "serial"]) {
         return ready
@@ -151,10 +166,14 @@ pub(super) fn pick_device(p: &Value) -> Result<String, String> {
             .ok_or_else(|| format!("device '{}' is not connected and ready. Ready devices:\n{}", want, if ready.is_empty() { "  (none)".to_string() } else { show(&ready) }));
     }
     match ready.len() {
-        1 => Ok(ready[0].0.clone()),
+        1 => {
+            remember::save(&ready[0].0, &ready[0].1);
+            Ok(ready[0].0.clone())
+        }
         0 => Err(format!(
-            "no Android device connected{}. Check the cable / `mysid wifi`, and accept the USB debugging prompt.",
-            if other.is_empty() { String::new() } else { format!(" (seen: {})", other.join(", ")) }
+            "no Android device connected{}{}. Check the cable / `mysid wifi`, and accept the USB debugging prompt.",
+            if other.is_empty() { String::new() } else { format!(" (seen: {})", other.join(", ")) },
+            note
         )),
         _ => Err(format!("{} devices are connected; pass --device <serial>:\n{}", ready.len(), show(&ready))),
     }
@@ -194,8 +213,46 @@ pub(super) fn screen_size(serial: &str) -> Result<(i64, i64), String> {
     Ok((w, h))
 }
 
+/// (asleep, locked) right now, from one shell call. Unknown counts as awake and unlocked.
+fn power_state(serial: &str) -> (bool, bool) {
+    let probe = "dumpsys power | grep -m1 mWakefulness=; dumpsys window | grep -E -m4 'isKeyguardShowing|mShowingLockscreen|mKeyguardShowing'";
+    let t = adb(Some(serial), &["shell", probe], ADB_TIMEOUT).map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+    let asleep = Regex::new(r"mWakefulness=(\w+)").unwrap().captures(&t).map_or(false, |c| &c[1] != "Awake");
+    let locked = ["isKeyguardShowing=true", "mShowingLockscreen=true", "mKeyguardShowing=true"].iter().any(|k| t.contains(k));
+    (asleep, locked)
+}
+
+/// A screen that is off is woken and a lock screen without a secret is dismissed; a secure one is reported as locked, so
+/// the commands never run against the lock screen's own window (and never report it as "the app").
+pub(super) fn ensure_awake(serial: &str) -> Result<(), String> {
+    let (asleep, locked) = power_state(serial);
+    if !asleep && !locked {
+        return Ok(());
+    }
+    if asleep {
+        let _ = adb(Some(serial), &["shell", "input", "keyevent", "KEYCODE_WAKEUP"], ADB_TIMEOUT);
+        thread::sleep(Duration::from_millis(900));
+    }
+    let (asleep, locked) = power_state(serial);
+    if locked {
+        let _ = adb(Some(serial), &["shell", "wm", "dismiss-keyguard"], ADB_TIMEOUT);
+        thread::sleep(Duration::from_millis(700));
+    }
+    let (asleep2, locked2) = power_state(serial);
+    if asleep || asleep2 {
+        if asleep2 {
+            return Err("the screen is off and did not wake: press a button on the remote, then retry".to_string());
+        }
+    }
+    if locked2 {
+        return Err("the device is locked (a PIN, pattern or password is set): unlock it by hand, then retry".to_string());
+    }
+    Ok(())
+}
+
 pub(super) fn context(p: &Value, ws: Option<&Path>) -> Result<Ctx, String> {
     let serial = pick_device(p)?;
+    ensure_awake(&serial)?;
     let (dev_w, dev_h) = screen_size(&serial)?;
     let ws = ws.map(Path::to_path_buf).unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
     Ok(Ctx { serial, ws, dev_w, dev_h })
@@ -533,6 +590,7 @@ pub(super) fn point(ctx: &Ctx, p: &Value, what: &str) -> Result<(i64, i64, Strin
 }
 
 pub(super) fn shell_input(ctx: &Ctx, args: &[&str]) -> Result<(), String> {
+    focus::invalidate();
     let mut full = vec!["shell", "input"];
     full.extend_from_slice(args);
     let o = adb(Some(&ctx.serial), &full, ADB_TIMEOUT)?;
@@ -617,13 +675,16 @@ pub(super) fn act(ctx: &Ctx, action: &str, p: &Value) -> Result<Done, String> {
             // `--fast` (and `--gap ms`): every press in ONE adb call. A call costs ~1.7 s on a TV, so 20 presses one by one take half a minute.
             // `--keys "dpad_right dpad_right enter"` is a sequence; `--times n` repeats the whole sequence.
             let sequence: Option<Vec<String>> = text(p, &["keys", "sequence"]).map(|s| s.split(|c: char| c.is_whitespace() || c == ',').filter(|w| !w.is_empty()).map(keycode).collect());
-            if sequence.is_some() || flag(p, "fast") || num(p, &["gap"]).is_some() {
+            // `--times n` (n > 1) also goes in one call: only a `--gap` (or a single press) is sent one by one.
+            let repeats = num(p, &["times", "count", "repeat"]).map_or(1, |n| n.max(1.0) as usize) > 1;
+            if sequence.is_some() || flag(p, "fast") || repeats || num(p, &["gap"]).is_some() {
                 let one: Vec<String> = sequence.unwrap_or_else(|| vec![keycode(&text(p, &["keycode", "key"]).or_else(|| args_of(p).first().cloned()).unwrap_or_else(|| "KEYCODE_BACK".to_string()))]);
                 let asked = num(p, &["times", "count", "repeat"]).map_or(1, |n| n.max(1.0) as usize);
                 let times = asked.min((200 / one.len().max(1)).max(1));
                 let all: Vec<String> = (0..times).flat_map(|_| one.clone()).collect();
                 if let Some(gap) = num(p, &["gap"]) {
                     let gap = gap.max(0.0) as u64;
+                    focus::invalidate();
                     let script = format!("for k in {}; do input keyevent $k; sleep {}.{:03}; done", all.join(" "), gap / 1000, gap % 1000);
                     let o = adb(Some(&ctx.serial), &["shell", &script], ADB_TIMEOUT + Duration::from_millis(gap * all.len() as u64 + 400 * all.len() as u64))?;
                     if o.code != 0 {
@@ -735,7 +796,13 @@ pub(super) fn settle(ctx: &Ctx, p: &Value) -> (Option<String>, bool) {
 pub(super) fn settle_for(ctx: &Ctx, action: &str, p: &Value) -> (Option<String>, bool) {
     if matches!(action, "keyevent" | "key") && get(p, &["wait", "expect"]).is_none() {
         let cap = num(p, &["settle_timeout", "settle-timeout"]).map_or(focus::SETTLE_CAP_MS, |t| t.max(0.0) as u64).min(30_000);
-        let (ms, settled) = focus::wait_settled(ctx, cap);
+        // Settled = the focused element and the visible elements stopped changing (animations do not count); `--pixels` compares screenshots instead.
+        let directional = {
+            let keys = text(p, &["keys", "sequence"]).or_else(|| text(p, &["keycode", "key"])).or_else(|| args_of(p).first().cloned()).unwrap_or_default().to_lowercase();
+            let words: Vec<&str> = keys.split(|c: char| c.is_whitespace() || c == ',').filter(|w| !w.is_empty()).collect();
+            !words.is_empty() && words.iter().all(|w| ["dpad_up", "dpad_down", "dpad_left", "dpad_right"].iter().any(|d| w.contains(d)))
+        };
+        let (ms, settled) = if flag(p, "pixels") { focus::wait_settled_pixels(ctx, cap) } else { focus::wait_settled(ctx, cap, !directional || flag(p, "strict")) };
         return (Some(format!("{} in {}ms", if settled { "settled" } else { "still changing" }, ms)), true);
     }
     settle(ctx, p)
@@ -750,7 +817,9 @@ pub(super) fn run_one(ctx: &Ctx, action: &str, p: &Value) -> Result<String, Stri
     if !matches!(action, "screenshot" | "shot") {
         guard(ctx, p)?;
     }
-    let before = if diff_enabled(action, p) { screen_hash(ctx) } else { None };
+    // `--no-shot` skips the before/after screen comparison too (two screen captures, 2-3 s on a TV): the focus line is the answer.
+    let text_only = flag(p, "no_shot") || flag(p, "no-shot");
+    let before = if diff_enabled(action, p) && (!text_only || flag(p, "diff")) { screen_hash(ctx) } else { None };
     let done = act(ctx, action, p)?;
     let (note, _) = settle_for(ctx, action, p);
     // `--no-shot`: text only. The answer is the result line and where focus is (a few tokens instead of an image).

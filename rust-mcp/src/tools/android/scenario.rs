@@ -15,7 +15,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const DEFAULT_EXPECT_MS: u64 = 5000;
-const BOOL_FLAGS: &[&str] = &["cold", "no_ok", "list", "grid", "keep_going", "no_shot", "focus", "fast", "any_app"];
+const BOOL_FLAGS: &[&str] = &["cold", "no_ok", "list", "grid", "keep_going", "no_shot", "focus", "fast", "any_app", "pixels"];
 
 struct Step {
     name: String,
@@ -401,6 +401,71 @@ fn run_step(ctx: &Ctx, base: &Value, step: &Step, pkg: &str, cold_ms: &mut Optio
                 None => desc,
             })
         }
+    }
+}
+
+/// `goto X; key back` -> ["goto X", "key back"]: split on `;` outside quotes.
+pub(super) fn split_steps(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    for c in s.chars() {
+        match (quote, c) {
+            (Some(q), c) if c == q => {
+                quote = None;
+                cur.push(c);
+            }
+            (Some(_), c) => cur.push(c),
+            (None, '"') | (None, '\'') => {
+                quote = Some(c);
+                cur.push(c);
+            }
+            (None, ';') => out.push(std::mem::take(&mut cur)),
+            (None, c) => cur.push(c),
+        }
+    }
+    out.push(cur);
+    out.into_iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+}
+
+/// The steps of `mysid debug ... --do "goto X; key back"`: each runs like a scenario step (same words), text only, one line
+/// per step. The log is not cleared (the recorder is running); a failing step stops the rest.
+pub(super) fn run_lines(ws: Option<&Path>, lines: &[String]) -> String {
+    let ctx = match context(&json!({}), ws) {
+        Ok(c) => c,
+        Err(e) => return format!("  actions not run: {}", e),
+    };
+    let pkg = foreground(&ctx).unwrap_or_default();
+    let mut cold: Option<u64> = None;
+    let mut out: Vec<String> = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        let step = match step_from_line(line) {
+            Ok(v) => Step { name: line.clone(), v },
+            Err(e) => {
+                out.push(format!("  {}. {} FAILED: {}", i + 1, line, e));
+                break;
+            }
+        };
+        match run_step(&ctx, &json!({}), &step, &pkg, &mut cold) {
+            Ok(r) => out.push(format!("  {}. {} -> {}", i + 1, line, r)),
+            Err(e) => {
+                out.push(format!("  {}. {} FAILED: {}", i + 1, line, e.lines().next().unwrap_or("")));
+                break;
+            }
+        }
+    }
+    out.join("\n")
+}
+
+#[cfg(test)]
+mod do_tests {
+    use super::*;
+
+    #[test]
+    fn do_steps_split_on_semicolons_outside_quotes() {
+        assert_eq!(split_steps("goto X; key back"), vec!["goto X", "key back"]);
+        assert_eq!(split_steps("goto 'a;b' ; wait 500;"), vec!["goto 'a;b'", "wait 500"]);
+        assert!(split_steps("  ;; ").is_empty());
     }
 }
 

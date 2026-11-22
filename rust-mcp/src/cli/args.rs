@@ -565,6 +565,22 @@ pub(crate) fn parse_cli_args(args: &[String]) -> (String, Value) {
         if let Some(first) = positionals.first() {
             params.insert("url".to_string(), json!(first));
         }
+    } else if verb == "convert" {
+        // mysid convert <react-project> <flutter-project> [--dry-run] [--analyze] [--notes]; a bare flag must not swallow a path.
+        for k in ["dry_run", "dry-run", "analyze", "notes", "preview"] {
+            if let Some(Value::String(s)) = params.get(k).cloned() {
+                if !s.is_empty() && s != "true" {
+                    positionals.push(s);
+                }
+                params.insert(k.to_string(), json!(true));
+            }
+        }
+        if let Some(first) = positionals.first() {
+            params.insert("source".to_string(), json!(first));
+        }
+        if let Some(second) = positionals.get(1) {
+            params.insert("dest".to_string(), json!(second));
+        }
     } else if verb == "copy" || verb == "cp" {
         // mysid copy <src>... <dest> [--overwrite]; a bare flag would swallow the next word.
         if let Some(Value::String(v)) = params.get("overwrite").cloned() {
